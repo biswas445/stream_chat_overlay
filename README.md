@@ -1,8 +1,9 @@
-# Hikasha Chat — Stream Chat Overlay
+# Hikasha Chat — Stream Chat Overlay for Twitch, YouTube & Kick
 
-Transparent, always-on-top multistream chat overlay for Twitch, YouTube, and Kick.
-Floats live chat over any game or stream in a borderless Electron window —
-an alternative to an OBS browser source, independent of streaming software.
+Transparent, always-on-top multistream chat overlay for streamers.
+Floats Twitch, YouTube, and Kick live chat over any game or stream in a
+borderless Electron window — an OBS browser-source alternative that works
+with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 
 ![Electron 44](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)
 ![Vite 7](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)
