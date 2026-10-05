@@ -23,12 +23,27 @@ delete env.ELECTRON_RUN_AS_NODE;
 // The app root is the frontend directory (this file lives in electron/).
 const appPath = path.join(__dirname, '..');
 
-const child = spawn(electronExe, [appPath, ...process.argv.slice(2)], {
-  stdio: 'inherit',
-  env,
+let child;
+try {
+  child = spawn(electronExe, [appPath, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env,
+  });
+} catch (err) {
+  // ENOENT (Electron binary missing): fail loudly instead of dying silent.
+  console.error('[launch] failed to spawn Electron:', err.message);
+  process.exit(1);
+}
+
+child.on('error', (err) => {
+  console.error('[launch] Electron process error:', err.message);
+  process.exit(1);
 });
 
 child.on('close', (code, signal) => {
-  if (code !== null) process.exit(code);
-  process.exit(signal ? 1 : 0);
+  if (signal) {
+    console.error(`[launch] Electron terminated by signal ${signal}`);
+    process.exit(1);
+  }
+  process.exit(code ?? 1);
 });

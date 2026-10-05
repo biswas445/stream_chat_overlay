@@ -4,12 +4,10 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; frame-src https:; style-src 'self' 'unsafe-inline'; script-src 'self'"
-    /><!-- frame-src is https: (not a pinned host): the widget origin comes
-      from BOTRIX_WIDGET_URL in the local trusted .env, and a meta CSP
-      cannot be derived at runtime — pinning one vendor's host made any
-      other configured widget a SILENTLY blank iframe. chat.js validates
-      the URL and surfaces an explicit status when it is unusable. -->
+      content="default-src 'self'; object-src 'none'; base-uri 'self'; frame-src https://botrix.live https://www.botrix.live https://*.botrix.live; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    /><!-- frame-src pinned to BotRix (mirrors the main-process + renderer
+      allowlist): any other configured widget is rejected with an explicit
+      status in chat.js instead of a SILENTLY blank iframe. -->
     <title>Hikasha Chat</title>
     <style>
       :root {
@@ -118,6 +116,8 @@
         display: block;
       }
       #viewer-counts .vc.live { color: #7dbb6a; background: rgba(125, 187, 106, 0.14); }
+      #viewer-counts.stale { opacity: 0.55; }
+      #viewer-counts.stale .vc.live { color: inherit; background: rgba(61, 57, 41, 0.08); }
       body:not(.opaque) #viewer-counts .vc { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.12); }
       body:not(.opaque) #viewer-counts .vc.live { color: #b5e6a6; background: rgba(255,255,255,0.16); }
       #chat-status {
@@ -127,6 +127,10 @@
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         text-align: right;
         -webkit-app-region: no-drag;
+      }
+      .hbtn:focus-visible {
+        outline: 2px solid var(--claude-accent);
+        outline-offset: 2px;
       }
       #chat-status .dot {
         display: inline-block; width: 7px; height: 7px;
@@ -163,6 +167,34 @@
         background: transparent;
         display: block;
       }
+      /* SETUP CARD: shown instead of the iframe when BOTRIX_WIDGET_URL is
+         missing/broken. Actionable per failure code, theme-aware. */
+      #setup-card {
+        flex: 1; min-height: 0;
+        display: none; flex-direction: column;
+        align-items: flex-start; justify-content: center; gap: 8px;
+        padding: 18px; margin: 0 10px 10px;
+        border-radius: 12px;
+        font-size: 12.5px; line-height: 1.5;
+        background: rgba(61, 57, 41, 0.06);
+        color: var(--claude-ink);
+        -webkit-app-region: no-drag;
+        user-select: text;
+      }
+      #setup-card.show { display: flex; }
+      #setup-card .t { font-weight: 700; font-size: 13px; }
+      #setup-card code {
+        font-family: Consolas, monospace; font-size: 11.5px;
+        background: rgba(61, 57, 41, 0.1);
+        padding: 1px 6px; border-radius: 6px;
+        word-break: break-all;
+      }
+      #setup-card .hint { opacity: 0.75; font-size: 12px; }
+      body:not(.opaque) #setup-card {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+      }
+      body:not(.opaque) #setup-card code { background: rgba(255,255,255,0.16); }
     </style>
   </head>
   <body class="resizable">
@@ -174,7 +206,7 @@
           <span class="vc vc-youtube" title="youtube viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 7.3c-.3-1-1-1.8-2-2C19.2 4.8 12 4.8 12 4.8s-7.2 0-9 .5c-1 .2-1.7 1-2 2C.5 9 .5 12 .5 12s0 3 .5 4.7c.3 1 1 1.8 2 2 1.8.5 9 .5 9 .5s7.2 0 9-.5c1-.2 1.7-1 2-2 .5-1.7.5-4.7.5-4.7s0-3-.5-4.7zM9.8 15.5v-7l6.2 3.5-6.2 3.5z"/></svg><span class="n">0</span></span>
           <span class="vc vc-kick" title="kick viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h4v4h2V5h2V3h6v4h-2v2h2v4h-2v2h2v6h-6v-2h-2v-2H9v2H5V3z"/></svg><span class="n">0</span></span>
         </span>
-        <span id="chat-status"><span class="dot"></span>connecting...</span>
+        <span id="chat-status" role="status" aria-live="polite"><span class="dot"></span>connecting...</span>
         <button class="hbtn" id="btn-transparent" title="Transparent background" aria-label="Toggle transparency">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
@@ -194,6 +226,7 @@
       <div id="chat-frame-wrap">
         <iframe id="chat-frame" title="Multistream chat" allowtransparency="true"></iframe>
       </div>
+      <div id="setup-card" role="alert"></div>
     </div>
     <script type="module" src="/src/chat.js"></script>
   </body>

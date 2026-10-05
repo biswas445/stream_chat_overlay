@@ -11,11 +11,21 @@ contextBridge.exposeInMainWorld('chatPanel', {
   /** The BotRix multistream widget URL to embed (from BOTRIX_WIDGET_URL). */
   getWidgetUrl: () => ipcRenderer.invoke('chat:get-widget-url'),
 
+  /** Machine-readable config diagnosis: { code, url, bid }. */
+  getConfigStatus: () => ipcRenderer.invoke('chat:get-config-status'),
+
   /** Viewer counts: { total, twitch, youtube, kick } pushed every ~30s. */
   onViewers: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('chat:viewers', listener);
     return () => ipcRenderer.removeListener('chat:viewers', listener);
+  },
+
+  /** Unexpected main-process errors: { where, message }. */
+  onError: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('chat:error', listener);
+    return () => ipcRenderer.removeListener('chat:error', listener);
   },
 
   /** Persistent-ish window state for the renderer to restore its UI from. */

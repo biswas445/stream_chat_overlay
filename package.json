@@ -4,12 +4,49 @@
   "private": true,
   "description": "Standalone BotRix multistream chat panel overlay (Electron), extracted byte-exact from the ai_vtuber frontend.",
   "main": "electron/main.js",
+  "license": "MIT",
+  "author": "biswas445",
+  "repository": "https://github.com/biswas445/stream_chat_overlay.git",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "vite build",
-    "start": "npm run build && node electron/launch.js"
+    "start": "npm run build && node electron/launch.js",
+    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && npm run build",
+    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "live.botrix.chat-overlay",
+    "productName": "Hikasha Chat",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/renderer",
+      "electron",
+      "public/tray-icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/chat-logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Hikasha Chat"
+    }
+  },
+  "dependencies": {
+    "electron": "^44.0.0"
   },
   "devDependencies": {
-    "electron": "^44.0.0",
+    "electron-builder": "^26.0.12",
     "vite": "^7.0.0"
   },
   "allowScripts": {

@@ -61,11 +61,22 @@ function stateFile() {
   return path.join(app.getPath('userData'), 'overlay-state.json');
 }
 
+const {
+  sanitizeChatState,
+  isAllowedWidgetUrl,
+  parseBotrixWidgetUrl,
+  extractBotrixBid,
+  diagnoseWidgetUrl,
+  buildViewerUrlFromWidgetUrl,
+} = require('./state-utils');
+
 function loadState() {
   try {
     const saved = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
     if (saved.chat && typeof saved.chat === 'object') {
-      Object.assign(chatState, saved.chat);
+      // Validated allow-list merge (H-02): a corrupt overlay-state.json
+      // (NaN/Infinity/strings) can never reach BrowserWindow dims.
+      Object.assign(chatState, sanitizeChatState(saved.chat));
     }
   } catch {
     /* first run */
@@ -95,6 +106,15 @@ function saveState() {
  * small accent-colored dot (same technique as the original project's
  * tray icon) when the logo file is missing or unreadable. */
 function createTrayIcon() {
+  // Prefer the prebuilt 16px icon (public/tray-icon.png): the 256px logo
+  // no longer needs decoding + downscaling on every boot (M-10).
+  const trayPath = firstExisting(
+    RESOURCE_ROOTS.map((root) => path.join(root, 'public', 'tray-icon.png')),
+  );
+  if (trayPath) {
+    const img = nativeImage.createFromPath(trayPath);
+    if (!img.isEmpty()) return img;
+  }
   const logoPath = firstExisting(
     RESOURCE_ROOTS.map((root) => path.join(root, 'public', 'chat-logo.png')),
   );
@@ -125,11 +145,11 @@ function createTrayIcon() {
 }
 
 function buildTrayMenu() {
+  const open = Boolean(chatWin && !chatWin.isDestroyed());
   return Menu.buildFromTemplate([
     {
-      label: 'Show chat panel',
-      enabled: !(chatWin && !chatWin.isDestroyed()),
-      click: () => setChatOpen(true),
+      label: open ? 'Hide chat panel' : 'Show chat panel',
+      click: () => setChatOpen(!open),
     },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
@@ -175,6 +195,7 @@ function createSplashWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       backgroundThrottling: false,
     },
   });
@@ -191,19 +212,37 @@ function createSplashWindow() {
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
-    splashWin.loadURL(new URL('splash.html', devUrl).toString());
-  } else {
-    splashWin.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'splash.html'));
-  }
+  const splashReady = (async () => {
+    try {
+      if (devUrl) {
+        await splashWin.loadURL(new URL('splash.html', devUrl).toString());
+      } else {
+        await splashWin.loadFile(
+          path.join(__dirname, '..', 'dist', 'renderer', 'splash.html'),
+        );
+      }
+      return true;
+    } catch (err) {
+      console.error('[splash] failed to load:', err.message);
+      return false;
+    }
+  })();
 
   // Hard cap: the splash is a fixed ~2.5s intro (FL-Studio-style), NOT a
-  // wait-for-widget gate — the chat panel is created only when this fires,
-  // so the panel never appears in the background behind the logo.
-  setTimeout(() => {
-    dismissSplash();
-    createChatWindow();
-  }, 2500);
+  // wait-for-widget gate. The chat panel is created hidden UP FRONT so a
+  // splash load failure can never leave the app windowless (L-01); the
+  // timer only dismisses the splash and reveals the ready panel.
+  createChatWindow({ hidden: true });
+  splashReady.then((ok) => {
+    setTimeout(
+      () => {
+        dismissSplash();
+        if (chatWin && !chatWin.isDestroyed()) chatWin.show();
+        else createChatWindow();
+      },
+      ok ? 2500 : 0,
+    );
+  });
 }
 
 /** Dismiss the splash: fade out via the page's .bye class, then destroy
@@ -228,7 +267,8 @@ function dismissSplash() {
  *   - the BotRix multistream widget iframe renders live messages itself
  * Bounds persist in the shared state file (chatState) across restarts.
  */
-function createChatWindow() {
+function createChatWindow(opts = {}) {
+  const { hidden = false } = opts;
   const display = screen.getPrimaryDisplay();
 
   const w = Math.max(240, Math.round(chatState.w));
@@ -277,6 +317,11 @@ function createChatWindow() {
       preload: path.join(__dirname, 'chat-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      // Isolated persistent partition for the widget iframe (H-05): the
+      // bid-bearing BotRix session (cookies/cache/storage) never mixes with
+      // the default session. Chat messages still live only in DOM.
+      partition: 'persist:botrix-chat',
       // The panel embeds the BotRix widget iframe — webview/iframe needs
       // this ON for the remote page to run its scripts inside Electron.
       backgroundThrottling: false,
@@ -285,24 +330,22 @@ function createChatWindow() {
 
   if (chatState.pinned) chatWin.setAlwaysOnTop(true, 'screen-saver');
 
-  chatWin.once('ready-to-show', () => {
-    chatWin.show();
-    // Windows: show() can re-register a taskbar button even with
-    // skipTaskbar:true in the options — re-assert it after showing.
-    chatWin.setSkipTaskbar(true);
-  });
+  // Never let embedded widget content open popups or claim permissions:
+  // target=_blank / window.open inside the BotRix iframe must not spawn
+  // new Electron windows, and no media/fullscreen grants (M-03).
+  chatWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  chatWin.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
 
-  // TEMP-DIAG: forward the widget frame's console to the app console so
-  // one row's real HTML can be inspected. Attached BEFORE load so nothing
-  // is missed. Single-argument form: the legacy (event, level, message, ...)
-  // signature is deprecated and leaves `message` undefined on current
-  // Electron (the relay would never fire).
-  chatWin.webContents.on('console-message', (event) => {
-    const msg = String(event.message || '');
-    if (msg.includes('[hik-diag]')) {
-      console.log('[chat-frame]', msg.slice(0, 900));
-    }
-  });
+  // hidden:true (boot behind splash) defers show() to the splash timer;
+  // normal opens (tray reopen) show immediately.
+  if (hidden) chatWin.once('ready-to-show', () => chatWin.setSkipTaskbar(true));
+  else
+    chatWin.once('ready-to-show', () => {
+      chatWin.show();
+      // Windows: show() can re-register a taskbar button even with
+      // skipTaskbar:true in the options — re-assert it after showing.
+      chatWin.setSkipTaskbar(true);
+    });
 
   chatWin.on('moved', () => {
     if (!chatWin) return;
@@ -327,12 +370,38 @@ function createChatWindow() {
     refreshTray();
   });
 
+  // Renderer crash (GPU/OOM/widget blowup): never leave a dead white box —
+  // report it and offer the tray reopen path.
+  chatWin.webContents.on('render-process-gone', (_e, details) => {
+    reportUnexpected('render-gone', new Error(details && details.reason ? `reason=${details.reason}` : 'unknown'));
+  });
+  chatWin.webContents.on('unresponsive', () => {
+    reportUnexpected('unresponsive', new Error('renderer unresponsive'));
+  });
+  chatWin.webContents.on('did-fail-load', (_e, code, desc, url, _main) => {
+    reportUnexpected('panel-load', new Error(`code=${code} desc=${desc} url=${url}`));
+  });
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
-    chatWin.loadURL(new URL('chat.html', devUrl).toString());
-  } else {
-    chatWin.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'chat.html'));
-  }
+  const chatReady = (async () => {
+    try {
+      if (devUrl) {
+        await chatWin.loadURL(new URL('chat.html', devUrl).toString());
+      } else {
+        await chatWin.loadFile(
+          path.join(__dirname, '..', 'dist', 'renderer', 'chat.html'),
+        );
+      }
+      return true;
+    } catch (err) {
+      reportUnexpected('panel-load', err);
+      return false;
+    }
+  })();
+  chatWin.once('closed', () => {
+    // swallow: load promise outlives the window on fast close
+    chatReady.catch(() => {});
+  });
 
   // viewer counts: poll while the panel is open, stop when it closes
   startViewerPolling();
@@ -378,90 +447,171 @@ function setChatOpen(open) {
 /** The BotRix multistream widget URL for the chat panel's iframe — the
  * exact page an OBS browser source loads. Configured once in .env at the
  * app root (single config location for this standalone panel); the legacy
- * parent-of-app-root location is checked too. */
-function getBotrixWidgetUrl() {
+ * parent-of-app-root location is checked too. Returns null unless the URL
+ * is a valid https: BotRix URL (M-01). */
+/**
+ * Full config diagnosis (not just the URL): distinguishes every way a
+ * fresh install can be broken — no .env file, no key, empty value,
+ * wrong protocol/host, missing/invalid bid. The renderer renders an
+ * actionable setup card per code; the viewer poller stays silent.
+ */
+function diagnoseBotrixConfig() {
+  let envFound = false;
+  let raw = null;
   for (const root of RESOURCE_ROOTS) {
     try {
       const envText = fs.readFileSync(path.join(root, '.env'), 'utf8');
-      const m = envText.match(/^\s*BOTRIX_WIDGET_URL\s*=\s*(.+)$/m);
-      let url = m ? m[1].trim() : '';
-      if (url.startsWith('"') && url.endsWith('"')) url = url.slice(1, -1);
-      if (url.startsWith("'") && url.endsWith("'")) url = url.slice(1, -1);
-      if (url) return url;
+      envFound = true;
+      const parsed = parseBotrixWidgetUrl(envText);
+      if (parsed) {
+        raw = parsed;
+        break;
+      }
     } catch {
       /* no .env at this root — try the next */
     }
   }
-  return null;
+  if (!envFound) return { code: 'no-env', url: null, bid: null };
+  const d = diagnoseWidgetUrl(raw);
+  return { code: raw ? d.code : 'missing', url: d.url, bid: d.bid || null };
+}
+
+function getBotrixWidgetUrl() {
+  const d = diagnoseBotrixConfig();
+  return d.code === 'ok' ? d.url : null;
 }
 
 /* -------------------------------------------------- viewer counts --- */
 
-// BotRix's viewers widget uses plain REST polling (decoded from their
-// bundle): /api/widgets/viewers?platform=X&bid=Y returns the live count
-// per platform. We poll the same endpoint from the main process and push
-// the counts to the chat panel's header — same bid, same session.
+// BotRix's viewers widget page: /widgets/viewers/?bid=BID&platform=X
+// (user-verified: the /api/widgets/viewers path decoded from their bundle
+// does not serve counts; only the widget page does). We poll the widget
+// page per platform from the main process and push the parsed counts to
+// the chat panel's header — same bid, same session.
 const VIEWER_POLL_S = 30; // the widget's own cadence
 let viewerTimer = null;
 
-async function fetchPlatformViewers(bid, platform) {
+const VIEWER_PLATFORMS = ['twitch', 'youtube', 'kick'];
+
+/** Extract a viewer count from a widget page body. Handles JSON
+ * ({"viewerCount":N,...}) and HTML-embedded variants
+ * (viewerCount: N, "viewerCount":N, data-viewer-count="N"). */
+function parseViewerCount(body) {
+  if (!body) return null;
+  const m = String(body).match(
+    /["']?viewerCount["']?\s*[:=]\s*["']?(-?\d+)/i,
+  ) || String(body).match(/data-viewer-count\s*=\s*["'](-?\d+)/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  return n > 0 ? n : 0; // -1 (offline) and 0 read as 0
+}
+
+async function fetchPlatformViewers(widgetUrl, platform) {
+  // One request per platform, derived from the USER's .env widget URL:
+  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=twitch
+  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=kick
+  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=youtube
+  // Platforms are never comma-joined into one URL. Null when unconfigured.
+  const url = buildViewerUrlFromWidgetUrl(widgetUrl, platform);
+  if (!url) return null;
   try {
-    const url = `https://botrix.live/api/widgets/viewers?platform=${platform}&bid=${bid}`;
-    // NOTE: no Referer header. A custom Referer is a fetch-spec forbidden
-    // header that Electron's network service rejects outright in some
-    // contexts (ERR_BLOCKED_BY_CLIENT — the whole poll fails with it), and
-    // the live endpoint returns the identical body without it (verified:
-    // {"viewerCount":N,"ok":...} both ways), so it was never needed. The
-    // browser UA stays — plain net.fetch sends the Electron UA otherwise.
-    const res = await net.fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    });
-    if (!res.ok) return 0;
-    const data = await res.json();
-    const n = Number(data && data.viewerCount);
-    return Number.isFinite(n) && n > 0 ? n : 0; // -1 (offline) and 0 read as 0
+    // 8s abort so a blackholed endpoint can't hang the 30s poll slot.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let res;
+    try {
+      // NOTE: no Referer header. A custom Referer is a fetch-spec forbidden
+      // header that Electron's network service rejects outright in some
+      // contexts (ERR_BLOCKED_BY_CLIENT — the whole poll fails with it), and
+      // the live endpoint returns the identical body without it (verified:
+      // {"viewerCount":N,"ok":...} both ways), so it was never needed. The
+      // browser UA stays — plain net.fetch sends the Electron UA otherwise.
+      res = await net.fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return null; // network-level failure: distinct from 0 viewers
+    const text = await res.text();
+    return parseViewerCount(text); // null when unparseable: outage, not 0
   } catch {
-    return 0;
+    return null; // timeout / abort / DNS: caller tracks the streak
   }
 }
 
+let viewerFailStreak = 0;
+let viewerPollDelayMs = VIEWER_POLL_S * 1000;
+
 /** Poll all platforms' viewer counts and push them to the chat panel.
- * Failure of any platform just reads as 0 — the poller never crashes. */
+ * Failures are signalled explicitly (`error:true`, `stale` after 2+
+ * consecutive failures) with exponential backoff up to 5 min — the UI
+ * never mistakes an outage for "0 viewers", and a dead endpoint isn't
+ * hammered every 30 s forever (M-09). */
 async function pollViewerCounts() {
-  const bid = getBotrixBid();
-  if (!bid) return;
-  const [twitch, youtube, kick] = await Promise.all([
-    fetchPlatformViewers(bid, 'twitch'),
-    fetchPlatformViewers(bid, 'youtube'),
-    fetchPlatformViewers(bid, 'kick'),
-  ]);
-  const total = twitch + youtube + kick;
-  const payload = { total, twitch, youtube, kick };
+  const widgetUrl = getBotrixWidgetUrl();
+  if (!widgetUrl || !getBotrixBid()) return; // unconfigured: stay silent
+  const [twitch, youtube, kick] = await Promise.all(
+    VIEWER_PLATFORMS.map((p) => fetchPlatformViewers(widgetUrl, p)),
+  );
+  const failures = [twitch, youtube, kick].filter((r) => r === null).length;
+  if (failures > 0) {
+    viewerFailStreak += 1;
+    viewerPollDelayMs = Math.min(
+      300000,
+      VIEWER_POLL_S * 1000 * 2 ** Math.min(viewerFailStreak, 3),
+    );
+  } else {
+    viewerFailStreak = 0;
+    viewerPollDelayMs = VIEWER_POLL_S * 1000;
+  }
+  const payload = {
+    total: (twitch ?? 0) + (youtube ?? 0) + (kick ?? 0),
+    twitch: twitch ?? 0,
+    youtube: youtube ?? 0,
+    kick: kick ?? 0,
+    error: failures > 0,
+    stale: viewerFailStreak > 1,
+  };
   if (chatWin && !chatWin.isDestroyed()) {
     chatWin.webContents.send('chat:viewers', payload);
   }
 }
 
 /** Extract the bid from the configured widget URL (single source of truth:
- * BOTRIX_WIDGET_URL carries the session id). */
+ * BOTRIX_WIDGET_URL carries the session id). Delegates to the tested
+ * shared helper (state-utils.js). */
 function getBotrixBid() {
-  const url = getBotrixWidgetUrl();
-  if (!url) return null;
-  const m = url.match(/[?&]bid=([^&]+)/);
-  return m ? m[1] : null;
+  return extractBotrixBid(getBotrixWidgetUrl());
+}
+
+function scheduleViewerPoll() {
+  if (viewerTimer) return;
+  const tick = async () => {
+    viewerTimer = null;
+    await pollViewerCounts();
+    if (chatWin && !chatWin.isDestroyed()) {
+      viewerTimer = setTimeout(tick, viewerPollDelayMs);
+    }
+  };
+  viewerTimer = setTimeout(tick, 0); // immediate first count
 }
 
 function startViewerPolling() {
-  if (viewerTimer) return;
-  pollViewerCounts(); // immediate first count
-  viewerTimer = setInterval(pollViewerCounts, VIEWER_POLL_S * 1000);
+  viewerFailStreak = 0;
+  viewerPollDelayMs = VIEWER_POLL_S * 1000;
+  scheduleViewerPoll();
 }
 
 function stopViewerPolling() {
   if (viewerTimer) {
-    clearInterval(viewerTimer);
+    clearTimeout(viewerTimer);
     viewerTimer = null;
   }
+  viewerFailStreak = 0;
+  viewerPollDelayMs = VIEWER_POLL_S * 1000;
 }
 
 /* ------------------------------------------- chat widget panel-theme --- */
@@ -502,10 +652,14 @@ function buildChatWidgetCss() {
       background-repeat: no-repeat !important; background-size: contain !important;
     }`;
   return `
-    *, *::before, *::after { color: ${fg} !important; text-shadow: ${shadow} !important; }
-    img, video { filter: grayscale(1) !important; }
+    /* Scoped to chat rows only (M-06): the old global * + grayscale rules
+       killed emotes, badges, donation art and links across the widget. */
+    .chatMsg, .chatMsg .hik-name, .chatMsg .hik-sep, .chatMsg .hik-msg,
+    .chatMsg .name, .chatMsg .user, .chatMsg .link {
+      color: ${fg} !important; text-shadow: ${shadow} !important;
+    }
     /* strip the widget's own platform favicons; rows are tagged hik-pl-* */
-    img.badge { display: none !important; }
+    .chatMsg img.badge { display: none !important; }
     /* message container: rows stack from the TOP (old panel behavior),
        full width so every pill lines up — padded off the panel borders */
     #chatlist {
@@ -557,9 +711,11 @@ function buildChatWidgetCss() {
     .chatMsg .hik-msg strong {
       font-weight: 400 !important;
     }
-    /* hide the widget's scrollbar entirely (mouse wheel still scrolls) */
-    #chatlist::-webkit-scrollbar { width: 0 !important; display: none !important; }
-    #chatlist { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+    /* slim themed scrollbar (was fully hidden: keyboard/touch users lost
+       all scroll affordance). Mouse wheel still scrolls either way. */
+    #chatlist::-webkit-scrollbar { width: 6px !important; }
+    #chatlist::-webkit-scrollbar-thumb { background: ${thumb} !important; border-radius: 8px; }
+    #chatlist { scrollbar-width: thin !important; scrollbar-color: ${thumb} transparent !important; }
     /* donation/redemption rows keep their native DOM — bold their names
        through the widget's own .name class there */
     .chatMsg .name {
@@ -572,8 +728,6 @@ function buildChatWidgetCss() {
     ${iconRow('youtube', 'youtube')}
     ${iconRow('twitch', 'twitch')}
     ${iconRow('kick', 'kick')}
-    ::-webkit-scrollbar-thumb { background: ${thumb} !important; border-radius: 8px; }
-    ::-webkit-scrollbar { width: 8px; }
   `;
 }
 
@@ -664,20 +818,6 @@ function injectChatWidgetStyle() {
   if (!chatWin || chatWin.isDestroyed()) return false;
   const css = buildChatWidgetCss();
   const observerJs = buildChatWidgetObserverJs();
-  // TEMP-DIAG: dump the LAST row's full structure (children tags + classes)
-  // so the username/message selectors match the real DOM, not guesses.
-  const diagJs = `(() => {
-    const rows = document.querySelectorAll('.chatMsg');
-    if (rows.length && !window.__hikDiagDone) {
-      window.__hikDiagDone = true;
-      const r = rows[rows.length - 1];
-      const shape = (el, d) => {
-        const kids = [...el.children].map((c) => shape(c, d + 1)).join(' ');
-        return '<' + el.tagName.toLowerCase() + (el.className ? ' class=' + JSON.stringify(el.className) : '') + '>' + (kids ? ' [' + kids + ']' : '"' + (el.textContent || '').slice(0, 40) + '"');
-      };
-      console.log('[hik-diag] row:', shape(r, 0));
-    }
-  })()`;
   const code = `(() => {
     const id = 'hikasha-widget-style';
     let el = document.getElementById(id);
@@ -685,7 +825,6 @@ function injectChatWidgetStyle() {
     el.textContent = ${JSON.stringify(css)};
     (document.head || document.documentElement).appendChild(el);
     ${observerJs}
-    ${diagJs}
   })()`;
   let frames = [];
   try {
@@ -733,41 +872,96 @@ async function widgetHasChatRows() {
 
 /* -------------------------------------------------------------------- ipc */
 
+/** Wrap an IPC handler so a throw becomes a logged rejection the
+ * renderer's safeInvoke can display — never an unhandled crash. */
+function guarded(channel, fn) {
+  ipcMain.handle(channel, async (...args) => {
+    try {
+      return await fn(...args);
+    } catch (err) {
+      reportUnexpected(`ipc:${channel}`, err);
+      throw err; // renderer safeInvoke turns this into status text
+    }
+  });
+}
+
 function registerIpc() {
-  ipcMain.handle('chat:toggle-pin', () => {
+  guarded('chat:toggle-pin', () => {
     chatState.pinned = !chatState.pinned;
-    if (chatWin) chatWin.setAlwaysOnTop(chatState.pinned, 'screen-saver');
+    try {
+      if (chatWin) chatWin.setAlwaysOnTop(chatState.pinned, 'screen-saver');
+    } catch (err) {
+      reportUnexpected('ipc:toggle-pin:always-on-top', err);
+    }
     saveState();
     refreshTray();
     return chatState.pinned;
   });
 
-  ipcMain.handle('chat:toggle-transparent', () => {
+  guarded('chat:toggle-transparent', () => {
     chatState.transparent = !chatState.transparent;
     saveState();
     // re-theme the embedded widget live (white <-> black text)
-    injectChatWidgetStyle();
+    try {
+      injectChatWidgetStyle();
+    } catch (err) {
+      reportUnexpected('ipc:toggle-transparent:inject', err);
+    }
     refreshTray();
     // true = now OPAQUE (transparent off) — the renderer styles accordingly
     return !chatState.transparent;
   });
 
-  ipcMain.handle('chat:get-state', () => ({
-    pinned: chatState.pinned,
-    transparent: chatState.transparent,
+  guarded('chat:get-state', () => ({
+    pinned: chatState.pinned === true,
+    transparent: chatState.transparent !== false,
     // NOTE: no `connected`/`recent` fields — the chat-reader pipeline was
     // removed (the panel embeds the BotRix widget, which manages its own
     // connection); those legacy fields would always read as dead values.
   }));
 
   // The BotRix widget URL for the panel's iframe (from BOTRIX_WIDGET_URL).
-  ipcMain.handle('chat:get-widget-url', () => getBotrixWidgetUrl());
+  guarded('chat:get-widget-url', () => getBotrixWidgetUrl());
+
+  // Machine-readable config diagnosis for the setup card:
+  // { code, url, bid } — code is one of ok|no-env|missing|empty|
+  // bad-protocol|bad-host|no-bid|bad-bid.
+  guarded('chat:get-config-status', () => diagnoseBotrixConfig());
 
   // Panel close button — same path as toggling off from the character menu.
   ipcMain.on('chat:close', () => {
-    setChatOpen(false);
+    try {
+      setChatOpen(false);
+    } catch (err) {
+      reportUnexpected('ipc:chat:close', err);
+    }
   });
 }
+
+/* --------------------------------------------------- crash safety --- */
+
+// An unexpected throw must never take the whole overlay down silently.
+// Log it, keep the tray alive (so the user can reopen/quit), and surface
+// it in the open panel when possible instead of a dead window.
+function reportUnexpected(where, err) {
+  const msg = (err && (err.stack || err.message)) || String(err);
+  console.error(`[unexpected:${where}]`, msg);
+  try {
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWin.webContents.send('chat:error', {
+        where: String(where),
+        message: String((err && err.message) || err).slice(0, 300),
+      });
+    }
+  } catch {
+    /* window gone — tray still alive */
+  }
+}
+
+process.on('uncaughtException', (err) => reportUnexpected('main', err));
+process.on('unhandledRejection', (reason) =>
+  reportUnexpected('main-promise', reason),
+);
 
 /* ------------------------------------------------------------------ boot */
 
@@ -776,8 +970,16 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (chatWin) chatWin.show();
-    else setChatOpen(true); // tray-resident: a relaunch re-opens the panel
+    // Focus, not just show: a minimized/background panel must come forward.
+    // Guard the splash window: a relaunch during the 2.5s intro must not
+    // create a duplicate panel — the boot timer reveals it already.
+    if (chatWin && !chatWin.isDestroyed()) {
+      if (chatWin.isMinimized()) chatWin.restore();
+      chatWin.show();
+      chatWin.focus();
+    } else if (!splashWin || splashWin.isDestroyed()) {
+      setChatOpen(true); // tray-resident: a relaunch re-opens the panel
+    }
   });
 
   app.whenReady().then(() => {

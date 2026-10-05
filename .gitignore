@@ -1,8 +1,14 @@
 # dependencies
 node_modules/
 
-# build output
+# build output (vite) + packager artifacts (keep installers out of git)
 dist/
+release/
+*.exe
+*.msi
+*.AppImage
+*.dmg
+*.zip
 
 # local config / secrets
 .env
