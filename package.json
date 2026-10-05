@@ -42,6 +42,8 @@
       "dist/renderer",
       "electron",
       "public/tray-icon.png",
+      "public/chat-logo.png",
+      ".env.example",
       "package.json"
     ],
     "win": {

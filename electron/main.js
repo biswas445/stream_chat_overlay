@@ -26,13 +26,22 @@ const {
 const path = require('node:path');
 const fs = require('node:fs');
 
-// Resource resolution supports both checkouts: this repo's own layout
-// (electron/ sits at the repository root) and the legacy one where the app
-// lived in a frontend/ subfolder of a larger project.
-const RESOURCE_ROOTS = [
-  path.join(__dirname, '..'),
-  path.join(__dirname, '..', '..'),
-];
+// Resource resolution: repo layout (electron/ at root), legacy parent
+// layout, and packaged install (resources/app) — plus the portable
+// exe directory so an installed user can keep .env next to the binary.
+function resourceRoots() {
+  const roots = [path.join(__dirname, '..'), path.join(__dirname, '..', '..')];
+  try {
+    if (app.isPackaged) {
+      roots.unshift(path.dirname(app.getPath('exe')));
+      roots.unshift(process.resourcesPath);
+    }
+  } catch {
+    /* app not ready — dev defaults above suffice */
+  }
+  return roots;
+}
+const RESOURCE_ROOTS = resourceRoots();
 
 function firstExisting(paths) {
   return paths.find((p) => fs.existsSync(p)) || null;
@@ -109,15 +118,16 @@ function saveState() {
 function createTrayIcon() {
   // Prefer the prebuilt 16px icon (public/tray-icon.png): the 256px logo
   // no longer needs decoding + downscaling on every boot (M-10).
+  const roots = resourceRoots();
   const trayPath = firstExisting(
-    RESOURCE_ROOTS.map((root) => path.join(root, 'public', 'tray-icon.png')),
+    roots.map((root) => path.join(root, 'public', 'tray-icon.png')),
   );
   if (trayPath) {
     const img = nativeImage.createFromPath(trayPath);
     if (!img.isEmpty()) return img;
   }
   const logoPath = firstExisting(
-    RESOURCE_ROOTS.map((root) => path.join(root, 'public', 'chat-logo.png')),
+    roots.map((root) => path.join(root, 'public', 'chat-logo.png')),
   );
   if (logoPath) {
     const img = nativeImage.createFromPath(logoPath);
@@ -462,7 +472,7 @@ function setChatOpen(open) {
 function diagnoseBotrixConfig() {
   let envFound = false;
   let raw = null;
-  for (const root of RESOURCE_ROOTS) {
+  for (const root of resourceRoots()) {
     try {
       const envText = fs.readFileSync(path.join(root, '.env'), 'utf8');
       envFound = true;

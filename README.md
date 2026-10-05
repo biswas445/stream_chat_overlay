@@ -113,11 +113,14 @@ Electron main process
 
 | Path | Role |
 | --- | --- |
-| `electron/main.js` | Window management, widget theming, viewer counts, tray, state persistence |
+| `electron/main.js` | Windows, tray, viewer poller, error reporting, config diagnosis |
+| `electron/state-utils.js` | Tested helpers: state/env/URL/bid/viewer parsing |
 | `electron/chat-preload.js` | Secure IPC bridge exposed to the panel page |
 | `electron/launch.js` | Spawns Electron with `ELECTRON_RUN_AS_NODE` stripped |
-| `chat.html` / `src/chat.js` | The panel page: header, buttons, glass/solid themes |
+| `chat.html` / `src/chat.js` | Panel page: header, buttons, setup card, error display |
 | `splash.html` | The startup splash |
+| `tests/state-utils.test.js` | 16 unit tests (state, parser, allowlist, viewers, errors) |
+| `install.bat` / `start.bat` | First-run installer / launcher with preflight checks |
 | `vite.config.js` | Builds `chat.html` + `splash.html` into `dist/renderer` |
 
 ## Security notes
