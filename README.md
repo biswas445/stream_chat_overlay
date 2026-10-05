@@ -1,13 +1,19 @@
-# Hikasha Chat — Stream Chat Overlay
+# Hikasha Chat — Stream Chat Overlay (Twitch + YouTube + Kick)
 
-A standalone, **transparent, always-on-top multistream chat overlay panel** for
-streamers. It floats your Twitch, YouTube and Kick chat over your game or
-stream in a single borderless Electron window — the same way an OBS browser
-source would, but completely independent of your streaming software.
+> A standalone, **transparent, always-on-top multistream chat overlay panel**
+> for streamers. It floats your Twitch, YouTube and Kick chat over your game or
+> stream in a single borderless Electron window — the same way an OBS browser
+> source would, but completely independent of your streaming software.
 
 ![Electron](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Tests](https://github.com/biswas445/stream_chat_overlay/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+**Keywords:** twitch chat overlay, youtube live chat overlay, kick chat overlay,
+multistream chat, OBS chat overlay alternative, transparent chat panel,
+always-on-top chat, streamer overlay, BotRix widget, Electron overlay, Windows.
 
 ## Features
 
@@ -43,14 +49,25 @@ source would, but completely independent of your streaming software.
 
 ### Install & run
 
+**Easy (Windows):**
+
+1. Double-click **`install.bat`** — checks Node 18+, installs dependencies,
+   creates `.env` from the example, and verifies with the test suite.
+2. Paste your BotRix widget URL into `.env` (see below).
+3. Double-click **`start.bat`** to launch.
+
+**Manual:**
+
 ```bash
 git clone https://github.com/biswas445/stream_chat_overlay.git
 cd stream_chat_overlay
-npm install
-npm start
+npm install   # or double-click install.bat
+npm start     # or double-click start.bat
 ```
 
 `npm start` builds the renderer with Vite, then launches Electron.
+`npm test` runs syntax checks + 15 unit tests + production build.
+`npm run dist:win` produces a Windows NSIS installer in `release/`.
 
 ### Configure the widget
 
@@ -65,8 +82,12 @@ cp .env.example .env
 BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=..."
 ```
 
-The `.env` file is read by the Electron main process at startup — no secrets
-belong in the repo, and this file is git-ignored.
+The `.env` file is read by the Electron main process at startup.
+
+> **Keep your `?bid=` private.** It is your BotRix session id — anyone with
+> it can view your widget configuration. `.env` is git-ignored and never
+> committed; only `.env.example` (with a placeholder bid) is tracked. If a
+> bid ever leaks, regenerate the widget URL in BotRix and update `.env`.
 
 ## How it works
 
@@ -92,12 +113,26 @@ Electron main process
 
 ## Security notes
 
-- `contextIsolation` is on and `nodeIntegration` is off in every window; the
-  renderer talks to the main process only through the small IPC surface in
-  `chat-preload.js`.
-- The panel page's CSP allows `frame-src https:` so any configured widget
-  host works; the widget URL is validated to be `https://` before embedding.
-- No chat content, credentials, or identifiers are persisted anywhere.
+- `contextIsolation` is on, `nodeIntegration` is off, and `sandbox: true`
+  in every window; the renderer talks to the main process only through the
+  small IPC surface in `chat-preload.js`.
+- The widget URL is allow-listed to `botrix.live` in three layers
+  (main process, renderer, and CSP `frame-src`); popups are denied and no
+  media/fullscreen permissions are granted to embedded content.
+- The widget session uses an isolated `persist:botrix-chat` partition.
+- Chat content is never written to disk; window bounds/pin/theme persist in
+  `overlay-state.json`. The `?bid=` session id lives only in your local
+  git-ignored `.env` — never hardcode it anywhere else.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Setup card: `.env file not found` | Fresh clone | `copy .env.example .env`, paste widget URL |
+| Setup card: `missing ?bid=` | Truncated URL | Re-copy the FULL URL from BotRix |
+| `widget failed to load (timeout)` | Bad bid / offline | Check URL, check connection, restart |
+| Viewer pills dimmed at 0 | BotRix unreachable | Automatic backoff; recovers on its own |
+| `panel bridge unavailable` | Preload failed | Restart; reinstall if it persists |
 
 ## License
 

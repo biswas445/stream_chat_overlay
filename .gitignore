@@ -10,7 +10,8 @@ release/
 *.dmg
 *.zip
 
-# local config / secrets
+# local config / secrets — NEVER commit .env (holds BOTRIX_WIDGET_URL bid).
+# Only .env.example (placeholder bid) is tracked.
 .env
 .env.*
 !.env.example
