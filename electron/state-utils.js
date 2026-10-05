@@ -113,7 +113,23 @@ function diagnoseWidgetUrl(raw) {
   const bid = extractBotrixBid(url);
   if (!/[?&]bid=/.test(url)) return { code: 'no-bid', url };
   if (!bid) return { code: 'bad-bid', url };
-  return { code: 'ok', url, bid };
+  return { code: 'ok', url: canonicalWidgetUrl(url, bid), bid };
+}
+
+/**
+ * Canonicalize a user-pasted BotRix widget URL: keep origin + /widgets/chat/
+ * path + ONLY ?bid= (drop theme/sound/animation/toggles — display prefs the
+ * panel manages itself). Extra params never reach the iframe or poller,
+ * so users paste the whole BotRix link verbatim, no manual trimming.
+ */
+function canonicalWidgetUrl(url, bid) {
+  try {
+    const p = new URL(url);
+    const path = p.pathname.endsWith('/') ? p.pathname : `${p.pathname}/`;
+    return `${p.protocol}//${p.host}${path}?bid=${encodeURIComponent(bid || extractBotrixBid(url) || '')}`;
+  } catch {
+    return url;
+  }
 }
 
 /** Extract a viewer count from a widget page body. Handles JSON
@@ -185,5 +201,6 @@ module.exports = {
   parseViewerCount,
   buildViewerUrl,
   buildViewerUrlFromWidgetUrl,
+  canonicalWidgetUrl,
   normalizeViewerCounts,
 };

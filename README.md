@@ -82,17 +82,12 @@ npm start     # or double-click start.bat
    https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&messageSound=0&messageDirection=up&platformIcon=false&bots=false&emojis=true&hideCommands=false&hideMessages=true&hideMessagesSeconds=50&widgetSize=21&streamTogether=true&cheer=true&pointsReward=false&animation=popIn&showTimestamp=false&shadowThickness=1&twitch=true&youtube=true&kick=true&trovo=false
    ```
 
-5. **Trim it** — keep only the base plus your bid, drop everything from the
-   first `&` onward:
-
-   ```text
-   https://botrix.live/widgets/chat/?bid=YOUR_BID
-   ```
-
-6. Put it in your local `.env` (created by `install.bat`, or `cp .env.example .env`):
+5. **Paste the whole link as-is** into your local `.env` (created by
+   `install.bat`, or `cp .env.example .env`) — no trimming needed, the app
+   strips the display options automatically and keeps only your `?bid=`:
 
    ```dotenv
-   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
+   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&..."
    ```
 
 The `.env` file is read by the Electron main process at startup.

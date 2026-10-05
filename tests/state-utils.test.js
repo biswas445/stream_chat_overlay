@@ -13,6 +13,7 @@ const {
   parseViewerCount,
   buildViewerUrl,
   buildViewerUrlFromWidgetUrl,
+  canonicalWidgetUrl,
   normalizeViewerCounts,
 } = require('../electron/state-utils');
 
@@ -220,6 +221,21 @@ t('unexpected error channel wired end-to-end', () => {
       throw new Error(`error channel missing: ${needle}`);
     }
   }
+});
+
+t('whole BotRix URL auto-trimmed to canonical ?bid= only', () => {
+  const { diagnoseWidgetUrl } = require('../electron/state-utils');
+  const full =
+    'https://botrix.live/widgets/chat/?bid=ABC123&theme=default&messageSound=0&twitch=true&youtube=true&kick=true';
+  const d = diagnoseWidgetUrl(full);
+  assert.equal(d.code, 'ok');
+  assert.equal(d.bid, 'ABC123');
+  assert.equal(d.url, 'https://botrix.live/widgets/chat/?bid=ABC123');
+  assert.ok(!d.url.includes('theme=') && !d.url.includes('twitch='));
+  assert.equal(
+    canonicalWidgetUrl(full),
+    'https://botrix.live/widgets/chat/?bid=ABC123',
+  );
 });
 
 // --- normalizeViewerCounts ---
