@@ -1,116 +1,137 @@
-<div align="center">
+# Hikasha Chat — Stream Chat Overlay
 
-# 💬 Hikasha Chat
+Transparent, always-on-top multistream chat overlay for Twitch, YouTube, and Kick.
+Floats live chat over any game or stream in a borderless Electron window —
+an alternative to an OBS browser source, independent of streaming software.
 
-### Transparent multistream chat overlay for Twitch, YouTube & Kick
-
-Float your live chat over any game or stream in a borderless,
-always-on-top panel — no OBS required.
-
-![Electron](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)
+![Electron 44](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)
+![Vite 7](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-supported-blue?logo=windows&logoColor=white)
 ![CI](https://github.com/biswas445/stream_chat_overlay/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-</div>
+## Features
 
----
+- **Multistream chat** — Twitch, YouTube, and Kick in a single scroll,
+  rendered through your [BotRix](https://botrix.live) multistream widget.
+- **Transparent glass mode** — borderless panel floats over gameplay;
+  one click switches to an opaque solid card.
+- **Always-on-top pin** — keep the panel above all other windows.
+- **Live viewer counts** — per-platform counts in the header, refreshed
+  every 30 seconds with offline backoff.
+- **Frameless, movable, resizable** — drag the header to move; window
+  position and size persist across restarts.
+- **Themed messages** — pill rows, bold usernames, platform icons, zebra striping.
+- **Guided setup** — a missing or invalid configuration shows an actionable
+  setup card instead of a blank panel.
+- **Tray application** — no taskbar button; Show/Hide and Quit from the tray icon.
+- **Private by design** — messages exist only in memory; the widget session id
+  stays in your local git-ignored `.env` file.
 
-## ✨ What it does
+## Requirements
 
-| Feature | Details |
-| --- | --- |
-| 🌐 Multistream chat | Twitch + YouTube + Kick in one scroll, via your [BotRix](https://botrix.live) widget |
-| 🪟 True transparency | Glass mode floats over gameplay; one click switches to a solid card |
-| 📌 Always on top | Pin the panel above everything while you play |
-| 👁️ Viewer counts | Live per-platform pills in the header, refreshed every 30 s |
-| 🖱️ Frameless & movable | Drag the header, resize from edges — position is remembered |
-| 🎨 Themed messages | Pill rows, bold names, platform icons, zebra stripes |
-| 🔔 Tray app | No taskbar clutter — Show/Hide and Quit from the tray |
-| 🔒 Private | Messages live only in memory; your `?bid=` stays in your local `.env` |
+- Windows 10/11
+- [Node.js](https://nodejs.org) 18 or later (for running from source)
+- A free [BotRix](https://botrix.live) account with Twitch, YouTube,
+  and Kick connected
 
----
+## Quick Start
 
-## 🚀 Get started (5 minutes)
+**Option A — installer scripts (recommended):**
 
-### 1. Install
+1. Double-click `install.bat`. It verifies Node 18+, installs dependencies,
+   creates `.env` from the template, and runs the test suite.
+2. Paste your BotRix widget URL into `.env` (see Configuration).
+3. Double-click `start.bat` to launch.
 
-| Method | Steps |
-| --- | --- |
-| **Easy** | Double-click **`install.bat`** → it checks Node 18+, installs everything, creates `.env`, and self-tests |
-| **Manual** | `git clone https://github.com/biswas445/stream_chat_overlay.git` → `npm install` → `npm start` |
+**Option B — manual:**
 
-Requires **[Node.js 18+](https://nodejs.org)** and a free [BotRix](https://botrix.live) account.
+```bash
+git clone https://github.com/biswas445/stream_chat_overlay.git
+cd stream_chat_overlay
+npm install
+npm start
+```
 
-### 2. Connect your BotRix widget
+## Configuration
 
-1. Log in at [botrix.live](https://botrix.live) and **link Twitch, YouTube and Kick**.
-2. Open **Widgets** (left sidebar) → **Chat Overlay** → scroll down and **copy the link**.
-3. Paste the **whole link as-is** into `.env`:
+1. Log in at [botrix.live](https://botrix.live) and link your
+   Twitch, YouTube, and Kick accounts.
+2. Open **Widgets** in the left sidebar, select **Chat Overlay**,
+   scroll down, and copy the widget link. It looks like this:
+
+   ```text
+   https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&messageSound=0&...
+   ```
+
+3. Paste the **entire link as-is** into your local `.env` file:
 
    ```dotenv
    BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&..."
    ```
 
-   > No trimming needed — the app keeps only your `?bid=` internally.
-   > 🔐 **Never share this link.** The `?bid=` is your private session id.
-   > If it leaks, regenerate it in BotRix.
+   Trimming is unnecessary — the application extracts and retains only
+   the `?bid=` value internally.
 
-### 3. Launch
+> **Security note:** the `?bid=` value is a private session identifier.
+> Do not share the link. `.env` is git-ignored and never committed; only
+> `.env.example` (placeholder value) is tracked. If a bid is exposed,
+> regenerate the widget URL in BotRix and update `.env`.
 
-Double-click **`start.bat`** — the splash shows, then your chat panel appears.
-Drag it where you like; it reopens there next time.
+## Usage
 
----
-
-## 🛠️ Controls
-
-| Button | Action |
+| Control | Behavior |
 | --- | --- |
-| 📌 Pin | Toggle always-on-top |
-| ◯ Transparency | Switch glass ↔ solid |
-| ✕ Close | Quit the app (reopen with `start.bat` or the tray) |
+| Pin button | Toggle always-on-top |
+| Transparency button | Switch between glass and solid themes |
+| Close button | Quit the application |
+| Tray icon | Show/Hide panel, Quit |
 
-Right-click the **tray icon** for Show/Hide and Quit.
+Window position, size, pin state, and theme persist between sessions
+in `%AppData%/overlay-state.json`.
 
----
-
-## 🧰 For contributors
+## Development
 
 ```bash
-npm test       # syntax + 16 unit tests + production build
-npm run lint   # syntax + unit tests (no build)
-npm run dist:win  # Windows installer into release/
+npm test        # syntax checks + unit tests + production build
+npm run lint    # syntax checks + unit tests (no build)
+npm run dist:win  # Windows NSIS installer, output to release/
 ```
 
-| Path | Role |
+| Path | Responsibility |
 | --- | --- |
-| `electron/main.js` | Windows, tray, viewer poller, error reporting |
-| `electron/state-utils.js` | Tested parsing helpers (state, `.env`, URL, viewers) |
-| `electron/chat-preload.js` | Minimal secure IPC bridge |
-| `src/chat.js` + `chat.html` | Panel UI, setup card, error display |
-| `tests/state-utils.test.js` | Unit suite — must stay green |
-| `install.bat` / `start.bat` | Installer / launcher with preflight checks |
+| `electron/main.js` | Window management, tray, viewer polling, error reporting, config diagnosis |
+| `electron/state-utils.js` | Tested helpers: state validation, `.env` parsing, URL/bid/viewer logic |
+| `electron/chat-preload.js` | Minimal IPC bridge exposed to the renderer |
+| `electron/launch.js` | Process launcher (strips `ELECTRON_RUN_AS_NODE`) |
+| `src/chat.js`, `chat.html` | Panel UI, setup card, error display |
+| `splash.html` | Startup splash screen |
+| `tests/state-utils.test.js` | Unit test suite (must remain green) |
+| `install.bat`, `start.bat` | First-run installer and launcher with preflight checks |
+| `vite.config.js` | Renderer build configuration (`dist/renderer`) |
 
-Security model: `contextIsolation` + `sandbox` on, `nodeIntegration` off;
-widget host allow-listed to `botrix.live` (main + renderer + CSP);
-popups denied, no permissions granted, isolated session partition.
+## Security Model
 
----
+- `contextIsolation` enabled, `nodeIntegration` disabled, `sandbox: true`
+  on all windows. Renderer communicates only through the preload IPC bridge.
+- Widget URLs are restricted to `botrix.live` at three layers:
+  main process, renderer, and Content Security Policy `frame-src`.
+- Embedded content cannot open popups and is granted no media,
+  fullscreen, or device permissions.
+- The widget session uses an isolated `persist:botrix-chat` partition.
+- Chat content is never written to disk. Unexpected errors are logged
+  and surfaced in the panel rather than failing silently.
 
-## ❓ Troubleshooting
+## Troubleshooting
 
-| You see | Why | Fix |
+| Symptom | Cause | Resolution |
 | --- | --- | --- |
-| Setup card: `.env file not found` | Fresh install | `copy .env.example .env`, paste your link |
-| Setup card: `missing ?bid=` | Truncated URL | Re-copy the **full** link from BotRix |
-| `widget failed to load (timeout)` | Bad bid or offline | Check the link and connection, restart |
-| Dimmed viewer pills at 0 | BotRix unreachable | Automatic — recovers with backoff |
-| `panel bridge unavailable` | Preload failed | Restart; reinstall if it persists |
+| Setup card: `.env` file not found | Fresh install | Copy `.env.example` to `.env` and add the widget URL |
+| Setup card: `missing ?bid=` | Truncated URL | Re-copy the complete link from BotRix |
+| `widget failed to load (timeout)` | Invalid bid or offline | Verify the URL and connection, then restart |
+| Viewer counts dimmed at 0 | BotRix unreachable | Automatic recovery with exponential backoff |
+| `panel bridge unavailable` | Preload failure | Restart; reinstall if the problem persists |
 
----
+## License
 
-## 📄 License
-
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) for details.
