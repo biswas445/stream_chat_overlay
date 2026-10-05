@@ -23,6 +23,19 @@ const frame = document.getElementById('chat-frame');
 const setupCard = document.getElementById('setup-card');
 const viewerWrap = document.getElementById('viewer-counts');
 
+// Status line (built with DOM APIs, never innerHTML). Hoisted as a
+// function declaration so the bridge guard below can report through it.
+function setStatus(text, live) {
+  statusEl.classList.toggle('live', Boolean(live));
+  statusEl.replaceChildren();
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  statusEl.appendChild(dot);
+  const label = document.createElement('span');
+  label.textContent = text;
+  statusEl.appendChild(label);
+}
+
 // Preload bridge missing (wrong preload path, sandbox regression, dev
 // serving without Electron): fail LOUD with a setup card, not a silent
 // dead panel where every api.* call throws TypeError.
@@ -54,20 +67,6 @@ const viewerPillEls = {
   youtube: viewerWrap.querySelector('.vc-youtube'),
   kick: viewerWrap.querySelector('.vc-kick'),
 };
-
-// status line: cosmetic now — the widget manages its own connection; we
-// label the source so it's visible at a glance. Built with DOM APIs,
-// never innerHTML.
-function setStatus(text, live) {
-  statusEl.classList.toggle('live', Boolean(live));
-  statusEl.replaceChildren();
-  const dot = document.createElement('span');
-  dot.className = 'dot';
-  statusEl.appendChild(dot);
-  const label = document.createElement('span');
-  label.textContent = text;
-  statusEl.appendChild(label);
-}
 
 // ---- wire buttons ------------------------------------------------------------
 

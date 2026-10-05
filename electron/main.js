@@ -65,6 +65,7 @@ const {
   sanitizeChatState,
   isAllowedWidgetUrl,
   parseBotrixWidgetUrl,
+  parseViewerCount,
   extractBotrixBid,
   diagnoseWidgetUrl,
   buildViewerUrlFromWidgetUrl,
@@ -334,7 +335,15 @@ function createChatWindow(opts = {}) {
   // target=_blank / window.open inside the BotRix iframe must not spawn
   // new Electron windows, and no media/fullscreen grants (M-03).
   chatWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  chatWin.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  // NOTE: session lives on webContents (BrowserWindow has no .session) —
+  // wrong handle here crashed boot (TypeError on undefined).
+  try {
+    chatWin.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) =>
+      cb(false),
+    );
+  } catch (err) {
+    reportUnexpected('permissions', err);
+  }
 
   // hidden:true (boot behind splash) defers show() to the splash timer;
   // normal opens (tray reopen) show immediately.
@@ -444,11 +453,6 @@ function setChatOpen(open) {
   }
 }
 
-/** The BotRix multistream widget URL for the chat panel's iframe — the
- * exact page an OBS browser source loads. Configured once in .env at the
- * app root (single config location for this standalone panel); the legacy
- * parent-of-app-root location is checked too. Returns null unless the URL
- * is a valid https: BotRix URL (M-01). */
 /**
  * Full config diagnosis (not just the URL): distinguishes every way a
  * fresh install can be broken — no .env file, no key, empty value,
@@ -492,20 +496,6 @@ const VIEWER_POLL_S = 30; // the widget's own cadence
 let viewerTimer = null;
 
 const VIEWER_PLATFORMS = ['twitch', 'youtube', 'kick'];
-
-/** Extract a viewer count from a widget page body. Handles JSON
- * ({"viewerCount":N,...}) and HTML-embedded variants
- * (viewerCount: N, "viewerCount":N, data-viewer-count="N"). */
-function parseViewerCount(body) {
-  if (!body) return null;
-  const m = String(body).match(
-    /["']?viewerCount["']?\s*[:=]\s*["']?(-?\d+)/i,
-  ) || String(body).match(/data-viewer-count\s*=\s*["'](-?\d+)/i);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (!Number.isFinite(n)) return null;
-  return n > 0 ? n : 0; // -1 (offline) and 0 read as 0
-}
 
 async function fetchPlatformViewers(widgetUrl, platform) {
   // One request per platform, derived from the USER's .env widget URL:
@@ -755,7 +745,6 @@ function buildChatWidgetObserverJs() {
       twitch: /twitch|jtvnw/,
       kick: /kick/,
     };
-    const seen = [];
     const normalize = (row) => {
       if (!row || !row.classList) return;
       if (row.querySelector('.donation-container, .redemption-container, [class*="gift"]')) return;
@@ -928,10 +917,13 @@ function registerIpc() {
   // bad-protocol|bad-host|no-bid|bad-bid.
   guarded('chat:get-config-status', () => diagnoseBotrixConfig());
 
-  // Panel close button — same path as toggling off from the character menu.
+  // Panel X button — explicit user intent to exit the overlay entirely.
+  // (Hide-to-tray on X confused users: "X doesn't close the program".)
+  // So X quits the app; hiding stays available via the tray menu or
+  // OS window controls (Alt+F4), which keep the tray alive for reopen.
   ipcMain.on('chat:close', () => {
     try {
-      setChatOpen(false);
+      app.quit();
     } catch (err) {
       reportUnexpected('ipc:chat:close', err);
     }
