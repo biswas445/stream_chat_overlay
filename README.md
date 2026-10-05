@@ -69,25 +69,39 @@ npm start     # or double-click start.bat
 `npm test` runs syntax checks + 15 unit tests + production build.
 `npm run dist:win` produces a Windows NSIS installer in `release/`.
 
-### Configure the widget
+### Configure the widget — how to get your BotRix link
 
-Copy the example config and paste your BotRix multistream widget URL (the
-exact URL an OBS browser source would load):
+1. **Sign up or log in** at [botrix.live](https://botrix.live).
+2. **Link your accounts** — this panel supports 3 platforms right now:
+   **Twitch, YouTube and Kick**. Connect each one in BotRix.
+3. In the BotRix panel, open **Widgets** (left sidebar) → on the right find
+   the **Chat Overlay** option and click it.
+4. Scroll down to the bottom — you will get a link like this:
 
-```bash
-cp .env.example .env
-```
+   ```text
+   https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&messageSound=0&messageDirection=up&platformIcon=false&bots=false&emojis=true&hideCommands=false&hideMessages=true&hideMessagesSeconds=50&widgetSize=21&streamTogether=true&cheer=true&pointsReward=false&animation=popIn&showTimestamp=false&shadowThickness=1&twitch=true&youtube=true&kick=true&trovo=false
+   ```
 
-```dotenv
-BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=..."
-```
+5. **Trim it** — keep only the base plus your bid, drop everything from the
+   first `&` onward:
+
+   ```text
+   https://botrix.live/widgets/chat/?bid=YOUR_BID
+   ```
+
+6. Put it in your local `.env` (created by `install.bat`, or `cp .env.example .env`):
+
+   ```dotenv
+   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
+   ```
 
 The `.env` file is read by the Electron main process at startup.
 
-> **Keep your `?bid=` private.** It is your BotRix session id — anyone with
-> it can view your widget configuration. `.env` is git-ignored and never
-> committed; only `.env.example` (with a placeholder bid) is tracked. If a
-> bid ever leaks, regenerate the widget URL in BotRix and update `.env`.
+> **Do not share this link with anyone.** The `?bid=` is your BotRix
+> session id — anyone with it can view your widget configuration. `.env`
+> is git-ignored and never committed; only `.env.example` (with a
+> placeholder bid) is tracked. If a bid ever leaks, regenerate the widget
+> URL in BotRix and update `.env`.
 
 ## How it works
 
