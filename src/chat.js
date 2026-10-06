@@ -202,14 +202,14 @@ const offError =
       'Setup needed — .env file not found',
       [
         ['Copy .env.example to .env next to the app, then paste your BotRix multistream widget URL in it.', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"', true],
+        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
       ],
     ],
     missing: [
       'Setup needed — BOTRIX_WIDGET_URL not found',
       [
         ['Your .env exists but has no BOTRIX_WIDGET_URL line. Add it:', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"', true],
+        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
       ],
     ],
     empty: [
@@ -222,7 +222,7 @@ const offError =
       'Widget URL must be https://',
       [
         ['The configured URL is not https — the panel refuses to embed it. Fix BOTRIX_WIDGET_URL:', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"', true],
+        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
       ],
     ],
     'bad-host': [
@@ -235,7 +235,7 @@ const offError =
       'Widget URL is missing ?bid=',
       [
         ['Copy the FULL widget URL from BotRix — it carries the session id as ?bid=...', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"', true],
+        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
       ],
     ],
     'bad-bid': [

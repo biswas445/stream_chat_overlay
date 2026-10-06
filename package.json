@@ -66,12 +66,13 @@
       "shortcutName": "Hikasha Chat"
     }
   },
-  "dependencies": {
-    "electron": "^44.0.0"
-  },
   "devDependencies": {
+    "electron": "^44.0.0",
     "electron-builder": "^26.0.12",
     "vite": "^7.0.0"
+  },
+  "overrides": {
+    "@electron/get": "^5.1.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

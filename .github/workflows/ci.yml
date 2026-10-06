@@ -15,7 +15,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm audit --omit=dev
+      # electron lives in devDependencies (electron-builder requirement), so
+      # --omit=dev would audit nothing — audit the full tree instead.
+      - run: npm audit
 
   dist-win:
     needs: build-test
@@ -32,4 +34,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: hikasha-chat-win
-          path: dist/*.exe
+          # electron-builder outputs to release/ (package.json directories.output)
+          path: release/*.exe

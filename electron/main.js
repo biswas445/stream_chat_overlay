@@ -72,7 +72,6 @@ function stateFile() {
 
 const {
   sanitizeChatState,
-  isAllowedWidgetUrl,
   parseBotrixWidgetUrl,
   parseViewerCount,
   extractBotrixBid,
@@ -548,12 +547,20 @@ async function fetchPlatformViewers(widgetUrl, platform) {
 
 let viewerFailStreak = 0;
 let viewerPollDelayMs = VIEWER_POLL_S * 1000;
+// Poll-loop generation: start/stop bump it, so an in-flight poll from a
+// previous loop can never reschedule. Without this, a panel closed and
+// reopened while a poll's network requests are still outstanding leaves
+// TWO live poll chains (the stale tick's `viewerTimer = setTimeout(...)`
+// overwrites the variable but does not cancel the old timer) — BotRix
+// gets double-polled and backoff state splits across both chains.
+let viewerPollGen = 0;
 
 /** Poll all platforms' viewer counts and push them to the chat panel.
  * Failures are signalled explicitly (`error:true`, `stale` after 2+
  * consecutive failures) with exponential backoff up to 5 min — the UI
  * never mistakes an outage for "0 viewers", and a dead endpoint isn't
- * hammered every 30 s forever (M-09). */
+ * hammered every 30 s forever (M-09). Backoff ladder:
+ * 30s → 60s → 120s → 240s → 300s (5-min plateau at streak ≥ 4). */
 async function pollViewerCounts() {
   const widgetUrl = getBotrixWidgetUrl();
   if (!widgetUrl || !getBotrixBid()) return; // unconfigured: stay silent
@@ -563,9 +570,12 @@ async function pollViewerCounts() {
   const failures = [twitch, youtube, kick].filter((r) => r === null).length;
   if (failures > 0) {
     viewerFailStreak += 1;
+    // Exponent cap 4: 30s * 2^4 = 480s, clamped by the 5-min (300000 ms)
+    // ceiling — the plateau the contract above documents. (A cap of 3
+    // plateaued at 4 min and made the ceiling unreachable.)
     viewerPollDelayMs = Math.min(
       300000,
-      VIEWER_POLL_S * 1000 * 2 ** Math.min(viewerFailStreak, 3),
+      VIEWER_POLL_S * 1000 * 2 ** Math.min(viewerFailStreak, 4),
     );
   } else {
     viewerFailStreak = 0;
@@ -593,10 +603,11 @@ function getBotrixBid() {
 
 function scheduleViewerPoll() {
   if (viewerTimer) return;
+  const gen = viewerPollGen;
   const tick = async () => {
     viewerTimer = null;
     await pollViewerCounts();
-    if (chatWin && !chatWin.isDestroyed()) {
+    if (gen === viewerPollGen && chatWin && !chatWin.isDestroyed()) {
       viewerTimer = setTimeout(tick, viewerPollDelayMs);
     }
   };
@@ -606,6 +617,7 @@ function scheduleViewerPoll() {
 function startViewerPolling() {
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
+  viewerPollGen += 1; // invalidate any in-flight poll from a previous loop
   scheduleViewerPoll();
 }
 
@@ -614,6 +626,7 @@ function stopViewerPolling() {
     clearTimeout(viewerTimer);
     viewerTimer = null;
   }
+  viewerPollGen += 1; // in-flight poll must not reschedule after close
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
 }
@@ -1032,10 +1045,11 @@ if (!gotLock) {
 
     loadState();
     registerIpc();
-    // FL-Studio-style intro: ONLY the logo splash first (~2.5s, screen
-    // center, animated) — no chat panel behind it. When the timer fires
-    // the splash fades out and the panel is created then, so the panel
-    // never appears in the background while the logo is up.
+    // FL-Studio-style intro: the logo splash (~2.5s, screen center,
+    // animated) shows first, and the chat panel is created hidden UP FRONT
+    // behind it (L-01: a splash load failure can never leave the app
+    // windowless). The splash timer only dismisses the splash and reveals
+    // the ready panel — the panel never paints while the logo is up.
     createSplashWindow();
     createTray();
   });

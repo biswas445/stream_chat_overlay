@@ -90,7 +90,7 @@ if not exist ".env" (
     copy /y ".env.example" ".env" >nul
     echo [install] created .env from .env.example.
     echo [install] NEXT STEP: open .env and paste your BotRix widget URL:
-    echo [install]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"
+    echo [install]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
     echo.
   ) else (
     echo [install] WARNING: no .env.example found - skipping config step.

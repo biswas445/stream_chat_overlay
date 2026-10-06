@@ -46,7 +46,7 @@ if not exist ".env" (
     echo [start] no .env found - creating one from .env.example...
     copy /y ".env.example" ".env" >nul
     echo [start] Created .env. Open it and paste your BotRix widget URL:
-    echo [start]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/multistream?bid=YOUR_BID"
+    echo [start]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
     echo.
     echo [start] The panel will open with a setup card until this is set.
     pause
