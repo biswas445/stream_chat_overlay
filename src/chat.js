@@ -124,7 +124,14 @@ function showSettingsMsg(text, ok) {
 
 function renderSavedStatus(st) {
   if (st && st.url) {
-    settingsCurrent.textContent = `Saved: ${st.url}`;
+    // The bid is masked: the panel is designed to be captured on stream —
+    // opening settings while live must not broadcast the session id.
+    try {
+      const u = new URL(st.url);
+      settingsCurrent.textContent = `Saved: ${u.origin}${u.pathname}?bid=••••••`;
+    } catch {
+      settingsCurrent.textContent = 'Saved widget URL.';
+    }
   } else {
     settingsCurrent.textContent = 'No widget URL saved yet.';
   }
@@ -258,6 +265,18 @@ const SETUP_COPY = {
     'Widget URL host not allowed',
     [
       ['Only botrix.live widget URLs can be embedded. Click the gear icon and check for typos.', false],
+    ],
+  ],
+  'bad-port': [
+    'Widget URL port not allowed',
+    [
+      ['The saved URL has a non-standard port — the panel embeds only standard https. Click the gear icon and re-enter the plain botrix.live URL.', false],
+    ],
+  ],
+  'too-long': [
+    'Widget URL is too long',
+    [
+      ['The pasted URL exceeds 2048 characters. Re-copy the widget link from BotRix without extra data, then click the gear icon and re-enter it.', false],
     ],
   ],
   'no-bid': [

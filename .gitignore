@@ -10,11 +10,18 @@ release/
 *.dmg
 *.zip
 
-# local config / secrets — NEVER commit .env (holds BOTRIX_WIDGET_URL bid).
-# Only .env.example (placeholder bid) is tracked.
+# local config / secrets — NEVER commit. The settings db (botrix-config.json)
+# holds the private widget bid; it lives in %AppData% but this is the safety
+# net for any local copy. Keys and certs are never tracked either.
 .env
 .env.*
-!.env.example
+botrix-config.json
+overlay-state.json
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
 
 # logs & OS noise
 *.log

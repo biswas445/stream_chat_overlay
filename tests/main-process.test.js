@@ -23,10 +23,15 @@ function t(name, fn) {
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hikasha-test-'));
 const ipcHandlers = new Map();
 const ipcListeners = new Map();
+const createdChatWindows = [];
 
 const stubElectron = {
   app: {
     isPackaged: false,
+    // electron-updater's app adapter calls these at import time
+    getVersion: () => '0.0.0',
+    getAppPath: () => path.join(__dirname, '..'),
+    name: 'chat-overlay-frontend',
     getPath: (name) => (name === 'userData' ? userDataDir : path.join(os.tmpdir(), 'hikasha-fake-' + name)),
     requestSingleInstanceLock: () => true,
     on: () => {},
@@ -60,6 +65,9 @@ const stubElectron = {
 class FakeWebContents {
   constructor() {
     this._handlers = {};
+    // STABLE main-frame identity: real sender-gating compares the IPC
+    // event's senderFrame against this exact object.
+    this.mainFrame = { url: 'file:///test/chat.html', frames: [] };
   }
   on(ev, fn) {
     this._handlers[ev] = fn;
@@ -72,9 +80,6 @@ class FakeWebContents {
   get session() {
     return { setPermissionRequestHandler() {} };
   }
-  get mainFrame() {
-    return { frames: [] };
-  }
   executeJavaScript() {
     return Promise.resolve(undefined);
   }
@@ -85,6 +90,11 @@ class FakeBrowserWindow {
     this.webContents = new FakeWebContents();
     this.opts = opts;
     this.destroyed = false;
+    // only the panel window carries the preload bridge (it lives under
+    // webPreferences, not at the top level)
+    if (opts && opts.webPreferences && opts.webPreferences.preload) {
+      createdChatWindows.push(this);
+    }
   }
   on() {}
   once() {}
@@ -118,6 +128,13 @@ class FakeBrowserWindow {
   setSkipTaskbar() {}
 }
 stubElectron.BrowserWindow = FakeBrowserWindow;
+
+// A realistic IPC event from the panel's main frame (what the real
+// ipcMain.handle contract passes as the first argument).
+function panelEvent() {
+  const win = createdChatWindows[createdChatWindows.length - 1];
+  return { senderFrame: win ? win.webContents.mainFrame : null };
+}
 
 const electronPath = require.resolve('electron');
 const fakeModule = new Module('electron-stub', null);
@@ -153,16 +170,17 @@ async function main() {
 
   await (async () => {
     await settle();
-    const status = await ipcHandlers.get('chat:get-config-status')();
+    const status = await ipcHandlers.get('chat:get-config-status')(panelEvent());
     assert.equal(status.code, 'missing');
     assert.equal(status.url, null);
-    assert.equal(await ipcHandlers.get('chat:get-widget-url')(), null);
+    assert.equal(await ipcHandlers.get('chat:get-widget-url')(panelEvent()), null);
   })();
   n += 1;
   console.log(`ok ${n} - empty db diagnoses as 'missing' (silent poller)`);
 
   await (async () => {
     const res = await ipcHandlers.get('chat:save-url')(
+      panelEvent(),
       'https://botrix.live/widgets/chat/?bid=TESTBID1&theme=default&messageSound=0',
     );
     assert.equal(res.ok, true);
@@ -177,13 +195,19 @@ async function main() {
   console.log(`ok ${n} - save validates, canonicalizes, and persists to the db`);
 
   await (async () => {
-    const unchanged = await ipcHandlers.get('chat:save-url')('https://botrix.live/widgets/chat/?bid=TESTBID1');
+    const unchanged = await ipcHandlers.get('chat:save-url')(
+      panelEvent(),
+      'https://botrix.live/widgets/chat/?bid=TESTBID1',
+    );
     assert.equal(unchanged.ok, true);
     assert.equal(unchanged.code, 'unchanged');
-    const status = await ipcHandlers.get('chat:get-config-status')();
+    const status = await ipcHandlers.get('chat:get-config-status')(panelEvent());
     assert.equal(status.code, 'ok');
     assert.equal(status.bid, 'TESTBID1');
-    assert.equal(await ipcHandlers.get('chat:get-widget-url')(), 'https://botrix.live/widgets/chat/?bid=TESTBID1');
+    assert.equal(
+      await ipcHandlers.get('chat:get-widget-url')(panelEvent()),
+      'https://botrix.live/widgets/chat/?bid=TESTBID1',
+    );
   })();
   n += 1;
   console.log(`ok ${n} - re-saving the same URL is 'unchanged'; every-run read returns it`);
@@ -194,6 +218,8 @@ async function main() {
       ['http://botrix.live/?bid=X', 'bad-protocol'],
       ['not a url', 'bad-protocol'],
       ['https://evil.com/?bid=X', 'bad-host'],
+      ['https://botrix.live:8443/x?bid=X', 'bad-port'],
+      [`https://botrix.live/x?bid=${'a'.repeat(2100)}`, 'too-long'],
       ['https://botrix.live/widgets/chat/', 'no-bid'],
       ['https://botrix.live/?bid=%ZZ', 'bad-bid'],
       ['https://botrix.live/?bid=a b', 'bad-bid'],
@@ -203,7 +229,7 @@ async function main() {
       [42, 'missing'],
     ];
     for (const [raw, want] of cases) {
-      const res = await save(raw);
+      const res = await save(panelEvent(), raw);
       assert.equal(res.ok, false, JSON.stringify(raw));
       assert.equal(res.code, want, JSON.stringify(raw));
     }
@@ -214,15 +240,28 @@ async function main() {
   n += 1;
   console.log(`ok ${n} - every invalid input is rejected with its code; db untouched`);
 
+  // Non-panel senders (the remote widget iframe, other windows) must be
+  // REJECTED from every privileged channel — guarded() rethrows, so the
+  // invocation rejects.
+  await (async () => {
+    const save = ipcHandlers.get('chat:save-url');
+    await assert.rejects(() => save({ senderFrame: null }, 'https://botrix.live/?bid=X'));
+    await assert.rejects(() => save({ senderFrame: { url: 'https://evil.com/' } }, 'https://botrix.live/?bid=X'));
+    await assert.rejects(() => save({}, 'https://botrix.live/?bid=X'));
+    await assert.rejects(() => ipcHandlers.get('chat:get-config-status')({ senderFrame: null }));
+  })();
+  n += 1;
+  console.log(`ok ${n} - non-panel frames are rejected from privileged IPC`);
+
   // corrupt db -> sanitize to "no URL saved", never a crash
   fs.writeFileSync(configFile, '{ broken json!!');
   delete require.cache[mainPath];
   await (async () => {
     require(mainPath);
     await settle();
-    const status = await ipcHandlers.get('chat:get-config-status')();
+    const status = await ipcHandlers.get('chat:get-config-status')(panelEvent());
     assert.equal(status.code, 'missing');
-    assert.equal(await ipcHandlers.get('chat:get-widget-url')(), null);
+    assert.equal(await ipcHandlers.get('chat:get-widget-url')(panelEvent()), null);
   })();
   n += 1;
   console.log(`ok ${n} - corrupt db file falls back to 'missing' (boot never crashes)`);

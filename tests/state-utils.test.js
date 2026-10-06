@@ -114,6 +114,13 @@ t('config diagnosis codes', () => {
   assert.equal(diagnoseWidgetUrl('https://botrix.live/widgets/chat/').code, 'no-bid');
   assert.equal(diagnoseWidgetUrl('https://botrix.live/x?bid=%ZZ').code, 'bad-bid');
   assert.equal(diagnoseWidgetUrl('https://botrix.live/x?bid=a b').code, 'bad-bid');
+  // non-default ports are rejected with an exact reason (the panel CSP
+  // would refuse the embed anyway)
+  assert.equal(diagnoseWidgetUrl('https://botrix.live:8443/x?bid=ABC').code, 'bad-port');
+  assert.equal(diagnoseWidgetUrl('https://botrix.live/x?bid=ABC').code, 'ok');
+  assert.equal(diagnoseWidgetUrl('https://botrix.live:443/x?bid=ABC').code, 'ok');
+  // paste bombs are rejected: URLs over 2048 chars never validate
+  assert.equal(diagnoseWidgetUrl(`https://botrix.live/x?bid=${'a'.repeat(2100)}`).code, 'too-long');
   // bid=a with extra &evil param is FINE: bid regex stops at & -> 'a'.
   assert.equal(diagnoseWidgetUrl('https://botrix.live/x?bid=a&evil=1').code, 'ok');
   const ok = diagnoseWidgetUrl('https://botrix.live/widgets/chat/?bid=ABC123');
@@ -184,7 +191,7 @@ t('every diagnosis code has a distinct user message', () => {
   // Mirrors SETUP_COPY keys in src/chat.js — a code without copy = blank UI.
   // 'no-env' is gone: the .env mechanism was removed in favor of the
   // settings db (gear icon in the panel).
-  const codes = ['missing', 'empty', 'bad-protocol', 'bad-host', 'no-bid', 'bad-bid'];
+  const codes = ['missing', 'empty', 'bad-protocol', 'bad-host', 'bad-port', 'too-long', 'no-bid', 'bad-bid'];
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'src', 'chat.js'),
     'utf8',
@@ -233,6 +240,11 @@ t('whole BotRix URL auto-trimmed to canonical ?bid= only', () => {
     canonicalWidgetUrl(full),
     'https://botrix.live/widgets/chat/?bid=ABC123',
   );
+  // non-default ports never survive canonicalization (the panel CSP
+  // refuses ported hosts — the saved URL must match every layer)
+  const ported = canonicalWidgetUrl('https://botrix.live:8443/widgets/chat/?bid=ABC123');
+  assert.ok(!ported.includes(':8443'), ported);
+  assert.equal(ported, 'https://botrix.live/widgets/chat/?bid=ABC123');
 });
 
 // --- normalizeViewerCounts ---
@@ -291,12 +303,37 @@ t('settings flow wired end-to-end (db, save IPC, panel UI)', () => {
       throw new Error(`settings wiring missing: ${needle}`);
     }
   }
-  // The .env mechanism is gone from all three layers (process.env for the
-  // vite dev-server flag is unrelated and stays).
+  // The .env VAR mechanism is gone from all three layers. The .env FILE
+  // name may appear in main.js only inside the one-time legacy migration
+  // (migrateLegacyEnvConfig) that imports a pre-upgrade config into the
+  // settings db.
   for (const [name, src] of [['main.js', main], ['chat-preload.js', pre], ['chat.js', chat]]) {
-    if (/(?<!process)\.env\b|BOTRIX_WIDGET_URL|parseBotrixWidgetUrl/.test(src)) {
-      throw new Error(`.env mechanism still present in ${name}`);
+    if (/parseBotrixWidgetUrl|BOTRIX_WIDGET_URL/.test(src)) {
+      throw new Error(`env-var mechanism still present in ${name}`);
     }
+  }
+  if (/parseBotrixWidgetUrl|BOTRIX_WIDGET_URL/.test(main) || !main.includes('migrateLegacyEnvConfig')) {
+    throw new Error('main.js env-mechanism guard violated');
+  }
+  // Brace-matched extraction of the migration (doc comment included —
+  // it precedes the function declaration): .env may be referenced ONLY
+  // inside it.
+  const migrateIdx = main.indexOf('function migrateLegacyEnvConfig');
+  const docIdx = main.lastIndexOf('/**', migrateIdx);
+  let depth = 0;
+  let began = false;
+  let migrateEnd = -1;
+  for (let i = migrateIdx; i < main.length; i++) {
+    if (main[i] === '{') { depth += 1; began = true; }
+    else if (main[i] === '}') {
+      depth -= 1;
+      if (began && depth === 0) { migrateEnd = i + 1; break; }
+    }
+  }
+  if (migrateEnd === -1) throw new Error('migrateLegacyEnvConfig body not parseable');
+  const outsideMigration = main.slice(0, docIdx) + main.slice(migrateEnd);
+  if (/(?<!process)\.env\b/.test(outsideMigration)) {
+    throw new Error('main.js reads .env outside the legacy migration');
   }
   // The gear button exists in the panel markup with the shared hbtn class.
   const html = fs.readFileSync(path.join(root, 'chat.html'), 'utf8');

@@ -23,6 +23,7 @@ const {
   Menu,
   nativeImage,
 } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -73,6 +74,7 @@ function stateFile() {
 const {
   sanitizeChatState,
   sanitizeConfig,
+  isAllowedWidgetUrl,
   parseViewerCount,
   extractBotrixBid,
   diagnoseWidgetUrl,
@@ -92,11 +94,20 @@ function loadState() {
   }
 }
 
+/** Atomic JSON write: temp file + rename, so a crash or power loss
+ * mid-write can never leave a truncated store (rename is atomic on the
+ * same volume). */
+function atomicWriteJson(file, data) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, file);
+}
+
 let saveTimer = null;
 function writeState() {
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
-    fs.writeFileSync(stateFile(), JSON.stringify({ chat: chatState }, null, 2));
+    atomicWriteJson(stateFile(), { chat: chatState });
   } catch (err) {
     console.error('[state] failed to save:', err.message);
   }
@@ -133,7 +144,37 @@ function loadBotrixConfig() {
 
 function writeBotrixConfig(cfg) {
   fs.mkdirSync(path.dirname(configFile()), { recursive: true });
-  fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2));
+  atomicWriteJson(configFile(), cfg);
+}
+
+/** One-time migration: pre-settings-db installs stored the widget URL in a
+ * legacy .env next to the app. On the first boot after upgrading, if the
+ * settings db has no URL, import the https: URL from the first existing
+ * legacy .env. Comment lines are skipped (the template's own comments
+ * mention botrix.live URLs as prose — they must never match), and the db
+ * becomes the single source of truth; the .env is never read again for
+ * anything else and can be deleted by the user afterwards. */
+function migrateLegacyEnvConfig() {
+  if (loadBotrixConfig().widgetUrl) return; // db already configured
+  for (const root of resourceRoots()) {
+    try {
+      const envText = fs.readFileSync(path.join(root, '.env'), 'utf8');
+      for (const line of String(envText).split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue; // comments are prose, never values
+        const m = t.match(/https:\/\/botrix\.live[^\r\n"']+/);
+        if (!m) continue;
+        const d = diagnoseWidgetUrl(m[0].trim());
+        if (d.code === 'ok') {
+          writeBotrixConfig({ widgetUrl: d.url });
+          console.error('[config] migrated legacy config-file widget URL into the settings db');
+        }
+        return; // only the first value line is considered
+      }
+    } catch {
+      /* no legacy config at this root — try the next */
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ tray */
@@ -186,7 +227,10 @@ function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
       label: open ? 'Hide chat panel' : 'Show chat panel',
-      click: () => setChatOpen(!open),
+      // Open-state is recomputed AT CLICK TIME: the menu can sit open
+      // while the panel is opened/hidden through other paths — a captured
+      // boolean makes the toggle a silent no-op.
+      click: () => setChatOpen(!(chatWin && !chatWin.isDestroyed())),
     },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
@@ -201,6 +245,16 @@ function createTray() {
 
 function refreshTray() {
   if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+/** Renderer-initiated top-frame navigation is never wanted (see the
+ * guards at both windows): block it unconditionally. */
+function blockNavigations(wc) {
+  try {
+    wc.on('will-navigate', (e) => e.preventDefault());
+  } catch (err) {
+    reportUnexpected('will-navigate', err);
+  }
 }
 
 /* --------------------------------------------------------------- splash */
@@ -233,6 +287,9 @@ function createSplashWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // DevTools only in unpackaged dev runs — a packaged overlay must not
+      // expose the persist:botrix-chat session (bid-bearing) to Ctrl+Shift+I.
+      devtools: !app.isPackaged,
       backgroundThrottling: false,
     },
   });
@@ -241,6 +298,20 @@ function createSplashWindow() {
   // behind it must stay usable the whole time the splash is up.
   splashWin.setIgnoreMouseEvents(true);
 
+  // Same hardening as the panel (symmetry, defense-in-depth): no popups,
+  // no permission grants, no renderer-initiated navigation — the splash
+  // CSP runs no scripts, but a future regression must not silently gain
+  // default behavior.
+  splashWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  try {
+    splashWin.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) =>
+      cb(false),
+    );
+  } catch (err) {
+    reportUnexpected('splash-permissions', err);
+  }
+  blockNavigations(splashWin.webContents);
+
   splashWin.once('ready-to-show', () => {
     splashWin.show();
     // Windows: show() can re-register a taskbar button even with
@@ -248,7 +319,10 @@ function createSplashWindow() {
     splashWin.setSkipTaskbar(true);
   });
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  // Dev URL honored only in unpackaged dev runs: a packaged app must
+  // never load its pages from an arbitrary origin — the preload IPC
+  // bridge would be exposed to whatever origin the env var points at.
+  const devUrl = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
   const splashReady = (async () => {
     try {
       if (devUrl) {
@@ -336,6 +410,10 @@ function createChatWindow(opts = {}) {
     height: h,
     minWidth: 240,
     minHeight: 320,
+    // Same envelope the state sanitizer clamps to (state-utils): the user
+    // can never resize beyond what the next boot would restore.
+    maxWidth: 1600,
+    maxHeight: 1200,
     x,
     y,
     frame: false,
@@ -355,6 +433,9 @@ function createChatWindow(opts = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // DevTools only in unpackaged dev runs — a packaged overlay must not
+      // expose the persist:botrix-chat session (bid-bearing) to Ctrl+Shift+I.
+      devtools: !app.isPackaged,
       // Isolated persistent partition for the widget iframe (H-05): the
       // bid-bearing BotRix session (cookies/cache/storage) never mixes with
       // the default session. Chat messages still live only in DOM.
@@ -371,6 +452,13 @@ function createChatWindow(opts = {}) {
   // target=_blank / window.open inside the BotRix iframe must not spawn
   // new Electron windows, and no media/fullscreen grants (M-03).
   chatWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Renderer-initiated top-frame navigation is never wanted: the panel is
+  // a fixed local page and the widget lives inside the iframe. A
+  // compromised renderer (or an embedded page reaching the top frame)
+  // must not point the window at an arbitrary origin — the preload bridge
+  // would re-run there. Programmatic boot loads (loadURL/loadFile) do NOT
+  // emit will-navigate, so boot is unaffected.
+  blockNavigations(chatWin.webContents);
   // NOTE: session lives on webContents (BrowserWindow has no .session) —
   // wrong handle here crashed boot (TypeError on undefined).
   try {
@@ -423,11 +511,29 @@ function createChatWindow(opts = {}) {
   chatWin.webContents.on('unresponsive', () => {
     reportUnexpected('unresponsive', new Error('renderer unresponsive'));
   });
-  chatWin.webContents.on('did-fail-load', (_e, code, desc, url, _main) => {
-    reportUnexpected('panel-load', new Error(`code=${code} desc=${desc} url=${url}`));
+  chatWin.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    // Main-frame failures only (a widget-iframe load failure is surfaced
+    // by the panel's own blank-frame probe), and the logged URL is
+    // query-stripped: the ?bid= session id must never reach stderr/logs.
+    if (!isMainFrame) return;
+    const bare = typeof url === 'string' ? url.split('?')[0] : url;
+    reportUnexpected('panel-load', new Error(`code=${code} desc=${desc} url=${bare}`));
+  });
+  // A sub-frame that leaves botrix.live (open redirect, widget compromise)
+  // must never swap content under the trusted status label silently —
+  // surface it in the panel. The main process also stops injecting into
+  // non-botrix frames (the hostname gate holds), so the content is at
+  // least unthemed/visibly off; the status line tells the user why.
+  chatWin.webContents.on('did-frame-navigate', (_e, url, isMainFrame) => {
+    if (isMainFrame || isAllowedWidgetUrl(url)) return;
+    const bare = typeof url === 'string' ? url.split('?')[0] : url;
+    reportUnexpected('widget-frame', new Error(`frame left botrix: ${bare}`));
   });
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  // Dev URL honored only in unpackaged dev runs: a packaged app must
+  // never load its pages from an arbitrary origin — the preload IPC
+  // bridge would be exposed to whatever origin the env var points at.
+  const devUrl = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
   const chatReady = (async () => {
     try {
       if (devUrl) {
@@ -545,6 +651,10 @@ async function fetchPlatformViewers(widgetUrl, platform) {
       res = await net.fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         signal: ctrl.signal,
+        // Redirects are never followed: a compromised widget service must
+        // not turn the trusted poller into a request fork at arbitrary
+        // origins — a 3xx reads as an outage (backoff), not data.
+        redirect: 'manual',
       });
     } finally {
       clearTimeout(timer);
@@ -559,6 +669,12 @@ async function fetchPlatformViewers(widgetUrl, platform) {
 
 let viewerFailStreak = 0;
 let viewerPollDelayMs = VIEWER_POLL_S * 1000;
+// The poller is frozen to the BOOT-time widget URL: a URL saved via the
+// gear icon mid-session is adopted by the next startup, never by the
+// running session — the embedded iframe is also frozen at boot, so the
+// two layers must always agree (viewer pills vs chat content can never
+// show different channels).
+let viewerPollUrl = null;
 // Poll-loop generation: start/stop bump it, so an in-flight poll from a
 // previous loop can never reschedule. Without this, a panel closed and
 // reopened while a poll's network requests are still outstanding leaves
@@ -574,8 +690,9 @@ let viewerPollGen = 0;
  * hammered every 30 s forever (M-09). Backoff ladder:
  * 30s → 60s → 120s → 240s → 300s (5-min plateau at streak ≥ 4). */
 async function pollViewerCounts() {
-  const widgetUrl = getBotrixWidgetUrl();
-  if (!widgetUrl || !getBotrixBid()) return; // unconfigured: stay silent
+  const widgetUrl = viewerPollUrl;
+  const bid = widgetUrl ? extractBotrixBid(widgetUrl) : null;
+  if (!widgetUrl || !bid) return; // unconfigured: stay silent
   const [twitch, youtube, kick] = await Promise.all(
     VIEWER_PLATFORMS.map((p) => fetchPlatformViewers(widgetUrl, p)),
   );
@@ -630,6 +747,7 @@ function startViewerPolling() {
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
   viewerPollGen += 1; // invalidate any in-flight poll from a previous loop
+  viewerPollUrl = getBotrixWidgetUrl(); // frozen boot-time config
   scheduleViewerPoll();
 }
 
@@ -639,6 +757,7 @@ function stopViewerPolling() {
     viewerTimer = null;
   }
   viewerPollGen += 1; // in-flight poll must not reschedule after close
+  viewerPollUrl = null;
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
 }
@@ -760,6 +879,15 @@ function buildChatWidgetCss() {
   `;
 }
 
+/** True when the frame URL is an https: botrix.live page. Proper hostname
+ * validation — never substring matching, which ANY URL containing the
+ * token could spoof (e.g. https://attacker.example/botrix.live/ or a
+ * query param). Gate before every frame.executeJavaScript into the
+ * widget. */
+function isBotrixFrameUrl(url) {
+  return isAllowedWidgetUrl(url);
+}
+
 /** Runs INSIDE the widget frame: normalizes every message row into the
  * EXACT old-panel format regardless of the widget's internal markup:
  *
@@ -862,7 +990,7 @@ function injectChatWidgetStyle() {
   }
   let injected = false;
   for (const frame of frames) {
-    if (frame && frame.url && frame.url.includes('botrix.live')) {
+    if (frame && frame.url && isBotrixFrameUrl(frame.url)) {
       injected = true;
       Promise.resolve(frame.executeJavaScript(code, false)).catch(() => {});
     }
@@ -883,7 +1011,7 @@ async function widgetHasChatRows() {
     return false;
   }
   for (const frame of frames) {
-    if (frame && frame.url && frame.url.includes('botrix.live')) {
+    if (frame && frame.url && isBotrixFrameUrl(frame.url)) {
       try {
         const rows = await frame.executeJavaScript(
           'document.querySelectorAll(".chatMsg").length',
@@ -900,11 +1028,34 @@ async function widgetHasChatRows() {
 
 /* -------------------------------------------------------------------- ipc */
 
+/** True when the IPC event comes from the chat panel's MAIN frame — not
+ * a sub-frame (the remote widget iframe) or another window. Privileged
+ * channels (config write, process exit, state mutation) are gated on
+ * this: sub-frames have their own WebFrameMain identity, so a compromised
+ * widget frame invoking IPC is rejected instead of acting on the app. */
+function senderIsPanelMainFrame(event) {
+  try {
+    return Boolean(
+      chatWin &&
+        !chatWin.isDestroyed() &&
+        event &&
+        event.senderFrame &&
+        event.senderFrame === chatWin.webContents.mainFrame,
+    );
+  } catch {
+    return false; // destroyed/detached frames throw on access
+  }
+}
+
 /** Wrap an IPC handler so a throw becomes a logged rejection the
- * renderer's safeInvoke can display — never an unhandled crash. */
+ * renderer's safeInvoke can display — never an unhandled crash. Every
+ * handler is sender-gated to the panel's main frame. */
 function guarded(channel, fn) {
-  ipcMain.handle(channel, async (...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     try {
+      if (!senderIsPanelMainFrame(event)) {
+        throw new Error(`rejected: ${channel} invoked from a non-panel frame`);
+      }
       return await fn(...args);
     } catch (err) {
       reportUnexpected(`ipc:${channel}`, err);
@@ -985,8 +1136,13 @@ function registerIpc() {
   // save, destroy the panel + tray up front, then quit — with a
   // force-exit fallback in case a hung window or future handler ever
   // stops app.quit() from completing.
-  ipcMain.on('chat:close', () => {
+  ipcMain.on('chat:close', (event) => {
     try {
+      // Privileged exit is sender-gated like every other channel.
+      if (!senderIsPanelMainFrame(event)) {
+        reportUnexpected('chat:close', new Error('rejected: close invoked from a non-panel frame'));
+        return;
+      }
       // Flush the debounced save FIRST so the last position/size is never
       // lost — app.exit() below skips before-quit.
       if (saveTimer !== null) {
@@ -1036,6 +1192,7 @@ function registerIpc() {
 function reportUnexpected(where, err) {
   const msg = (err && (err.stack || err.message)) || String(err);
   console.error(`[unexpected:${where}]`, msg);
+  appendErrorLog(where, msg);
   try {
     if (chatWin && !chatWin.isDestroyed()) {
       chatWin.webContents.send('chat:error', {
@@ -1048,12 +1205,40 @@ function reportUnexpected(where, err) {
   }
 }
 
+/** Rotating error log in userData/logs — attachable to bug reports. One
+ * line per error (stack header only, 500-char cap); secrets never reach
+ * it (bid-bearing URLs are query-stripped upstream). Rotation: the log
+ * moves to main.old.log past 512 KiB. */
+function appendErrorLog(where, msg) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'main.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 512 * 1024) {
+      fs.renameSync(file, path.join(dir, 'main.old.log'));
+    }
+    fs.appendFileSync(
+      file,
+      `[${new Date().toISOString()}] [${where}] ${String(msg).split('\n')[0].slice(0, 500)}\n`,
+    );
+  } catch {
+    /* logging must never crash the app */
+  }
+}
+
 process.on('uncaughtException', (err) => reportUnexpected('main', err));
 process.on('unhandledRejection', (reason) =>
   reportUnexpected('main-promise', reason),
 );
 
 /* ------------------------------------------------------------------ boot */
+
+// Test hook: E2E runs the app against an isolated userData dir (never the
+// user's real settings db). Must be set before any getPath('userData') use
+// and before the single-instance lock, which is keyed on the userData dir.
+if (process.env.OVERLAY_USER_DATA) {
+  app.setPath('userData', process.env.OVERLAY_USER_DATA);
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1076,6 +1261,7 @@ if (!gotLock) {
     app.setAppUserModelId('ai-assistant.chat-overlay');
 
     loadState();
+    migrateLegacyEnvConfig();
     registerIpc();
     // FL-Studio-style intro: the logo splash (~2.5s, screen center,
     // animated) shows first, and the chat panel is created hidden UP FRONT
@@ -1084,6 +1270,25 @@ if (!gotLock) {
     // the ready panel — the panel never paints while the logo is up.
     createSplashWindow();
     createTray();
+    // Auto-update (packaged builds only): the tag-gated release workflow
+    // publishes installers + latest.yml to GitHub Releases; the app checks
+    // on boot, downloads in the background, and applies on the next start.
+    // Failures are silent-by-design (offline is a normal state, not an
+    // error to surface over the stream).
+    if (app.isPackaged) {
+      try {
+        autoUpdater.autoDownload = true;
+        autoUpdater.on('update-downloaded', () => {
+          reportUnexpected(
+            'update',
+            new Error('an update was downloaded - it installs on the next start'),
+          );
+        });
+        autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+      } catch (err) {
+        reportUnexpected('update-check', err);
+      }
+    }
   });
 
   app.on('window-all-closed', () => {

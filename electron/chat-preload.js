@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Preload scripts run in EVERY frame — and this panel embeds the remote
+// BotRix widget in an iframe. Without this gate the full privileged
+// bridge (quit the app, read the bid, overwrite the saved URL) would be
+// exposed to that remote frame. Only the panel's TOP frame gets the
+// bridge; widget frames return early.
+if (window.top !== window) {
+  return;
+}
+
 contextBridge.exposeInMainWorld('chatPanel', {
   /** Toggle always-on-top for this window. Returns the new state. */
   togglePin: () => ipcRenderer.invoke('chat:toggle-pin'),

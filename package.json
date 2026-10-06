@@ -2,7 +2,7 @@
   "name": "chat-overlay-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "Transparent always-on-top multistream chat overlay for streamers — Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
+  "description": "Transparent always-on-top multistream chat overlay for streamers â€” Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
   "keywords": [
     "twitch-chat",
     "twitch-overlay",
@@ -23,20 +23,20 @@
   "main": "electron/main.js",
   "license": "MIT",
   "author": "biswas445",
-  "homepage": "https://github.com/biswas445/stream_chat_overlay#readme",
-  "bugs": "https://github.com/biswas445/stream_chat_overlay/issues",
+  "homepage": "https://github.com/hikashakatsunori/stream_chat_overlay#readme",
+  "bugs": "https://github.com/hikashakatsunori/stream_chat_overlay/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/biswas445/stream_chat_overlay.git"
+    "url": "https://github.com/hikashakatsunori/stream_chat_overlay.git"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "vite build",
     "start": "npm run build && node electron/launch.js",
-    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/main-process.test.js && npm run build",
-    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/main-process.test.js",
+    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && npm run build && node tests/e2e.test.js",
+    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -45,6 +45,11 @@
     "productName": "Hikasha Chat",
     "directories": {
       "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "hikashakatsunori",
+      "repo": "stream_chat_overlay"
     },
     "files": [
       "dist/renderer",
@@ -68,12 +73,18 @@
   "devDependencies": {
     "electron": "^44.0.0",
     "electron-builder": "^26.0.12",
+    "fast-check": "^4.10.2",
+    "playwright": "^1.63.0",
     "vite": "^7.0.0"
   },
   "overrides": {
     "@electron/get": "^5.1.0"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

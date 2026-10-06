@@ -79,12 +79,16 @@ function extractBotrixBid(url) {
  * Diagnose a raw widget URL value into a machine-readable reason.
  * Every failure mode gets its own code so the UI can tell the user
  * EXACTLY what to fix (no more guessing at a blank panel).
- * Codes: ok | missing | empty | bad-protocol | bad-host | no-bid | bad-bid
+ * Codes: ok | missing | empty | bad-protocol | bad-host | bad-port |
+ * too-long | no-bid | bad-bid
  */
+const MAX_WIDGET_URL_LEN = 2048;
+
 function diagnoseWidgetUrl(raw) {
   if (raw === null || raw === undefined) return { code: 'missing', url: null };
   const url = String(raw).trim();
   if (!url) return { code: 'empty', url: null };
+  if (url.length > MAX_WIDGET_URL_LEN) return { code: 'too-long', url };
   let parsed = null;
   try {
     parsed = new URL(url);
@@ -92,6 +96,10 @@ function diagnoseWidgetUrl(raw) {
     return { code: 'bad-protocol', url };
   }
   if (parsed.protocol !== 'https:') return { code: 'bad-protocol', url };
+  // Non-default ports: the panel CSP (frame-src, portless) would refuse
+  // the embed anyway — reject with an exact reason instead of a generic
+  // "failed to load" later.
+  if (parsed.port && parsed.port !== '443') return { code: 'bad-port', url };
   if (!isAllowedWidgetUrl(url)) return { code: 'bad-host', url };
   const bid = extractBotrixBid(url);
   if (!/[?&]bid=/.test(url)) return { code: 'no-bid', url };
@@ -102,14 +110,16 @@ function diagnoseWidgetUrl(raw) {
 /**
  * Canonicalize a user-pasted BotRix widget URL: keep origin + /widgets/chat/
  * path + ONLY ?bid= (drop theme/sound/animation/toggles — display prefs the
- * panel manages itself). Extra params never reach the iframe or poller,
- * so users paste the whole BotRix link verbatim, no manual trimming.
+ * panel manages itself), and drop any non-default port (the panel CSP
+ * refuses ported hosts — the saved URL must match what every layer will
+ * actually use). Extra params never reach the iframe or poller, so users
+ * paste the whole BotRix link verbatim, no manual trimming.
  */
 function canonicalWidgetUrl(url, bid) {
   try {
     const p = new URL(url);
     const path = p.pathname.endsWith('/') ? p.pathname : `${p.pathname}/`;
-    return `${p.protocol}//${p.host}${path}?bid=${encodeURIComponent(bid || extractBotrixBid(url) || '')}`;
+    return `${p.protocol}//${p.hostname}${path}?bid=${encodeURIComponent(bid || extractBotrixBid(url) || '')}`;
   } catch {
     return url;
   }
@@ -154,7 +164,10 @@ function buildViewerUrlFromWidgetUrl(widgetUrl, platform) {
   try {
     const p = new URL(widgetUrl);
     if (p.protocol === 'https:' && isAllowedWidgetUrl(widgetUrl)) {
-      origin = `${p.protocol}//${p.host}`;
+      // hostname, not host: a non-standard port in the saved URL is never
+      // carried into the poller (host is pinned to botrix.live, but the
+      // port must not survive either).
+      origin = `${p.protocol}//${p.hostname}`;
     }
   } catch {
     /* fall back to canonical origin */

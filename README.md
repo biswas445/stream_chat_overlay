@@ -8,7 +8,7 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 ![Electron 44](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)
 ![Vite 7](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-supported-blue?logo=windows&logoColor=white)
-![CI](https://github.com/biswas445/stream_chat_overlay/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/hikashakatsunori/stream_chat_overlay/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
@@ -28,6 +28,8 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 - **Tray application** — no taskbar button; Show/Hide and Quit from the tray icon.
 - **In-app setup** — no config files to edit: enter your widget URL once via the
   panel's gear icon; it is stored in a local settings file and loaded on every start.
+- **Auto-update** — packaged builds check GitHub Releases on boot and apply on
+  the next start (dev builds skip the check).
 - **Private by design** — messages exist only in memory; the widget session id
   stays in a local config file on your machine, never synced or logged.
 
@@ -52,7 +54,7 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 **Option B — manual:**
 
 ```bash
-git clone https://github.com/biswas445/stream_chat_overlay.git
+git clone https://github.com/hikashakatsunori/stream_chat_overlay.git
 cd stream_chat_overlay
 npm install
 npm start
@@ -104,10 +106,26 @@ in `%AppData%/overlay-state.json`.
 ## Development
 
 ```bash
-npm test        # syntax checks + unit tests + production build
-npm run lint    # syntax checks + unit tests (no build)
+npm test        # syntax checks + unit + property + behavioral tests + build + E2E
+npm run lint    # syntax checks + unit/property/behavioral tests (no build)
 npm run dist:win  # Windows NSIS installer, output to release/
 ```
+
+Test layers:
+
+- **Unit** (`tests/state-utils.test.js`) — pure helpers: state/config
+  validation, URL/bid diagnosis, canonicalization, viewer parsing, and
+  wiring contracts across the three layers.
+- **Property** (`tests/property.test.js`, fast-check) — whole-input-domain
+  properties: the allowlist never allows non-botrix hosts for any string,
+  sanitization never emits NaN/out-of-range dims, canonical output keeps
+  only `?bid=`, counts map to `max(0, N)`.
+- **Behavioral** (`tests/main-process.test.js`) — the real main process
+  against a stubbed Electron + real temp settings db: save, unchanged,
+  rejections, sender gating, corrupt-db fallback.
+- **E2E** (`tests/e2e.test.js`, Playwright Electron) — boots the real app
+  against an isolated userData dir and drives the actual UI: first-run
+  setup card, gear/Enter/Change flow, restart-load, X-button termination.
 
 | Path | Responsibility |
 | --- | --- |

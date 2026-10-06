@@ -25,7 +25,7 @@ if errorlevel 1 (
 )
 for /f %%v in ('node -p "process.versions.node"') do set NODEV=%%v
 echo [install] node v!NODEV! detected.
-node -e "const m=Number(process.versions.node.split('.')[0]); if (m<18){console.error('[install] ERROR: Node 18+ required, found '+process.versions.node);process.exit(1)}"
+node -e "const p=process.versions.node.split('.').map(Number); const ok=p[0]>22||(p[0]===22&&(p[1]>12||(p[1]===12&&p[2]>=0))); if(!ok){console.error('[install] ERROR: Node >=22.12.0 required (Electron 44 toolchain), found '+process.versions.node);process.exit(1)}"
 if errorlevel 1 (
   pause
   exit /b 1
