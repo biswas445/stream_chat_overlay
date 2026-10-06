@@ -10,8 +10,9 @@
  * All three platforms work with zero protocol code on our side, and the
  * panel keeps its native look around it.
  *
- * The widget URL comes from the main process (BOTRIX_WIDGET_URL in the
- * app-root .env), so the bid/session is configured in one place.
+ * The widget URL lives in the main process's local settings db (entered
+ * via the panel's gear icon), so the bid/session is configured in one
+ * place without any config files in the app folder.
  */
 
 const api = window.chatPanel;
@@ -22,6 +23,14 @@ const transparentBtn = document.getElementById('btn-transparent');
 const frame = document.getElementById('chat-frame');
 const setupCard = document.getElementById('setup-card');
 const viewerWrap = document.getElementById('viewer-counts');
+const frameWrap = document.getElementById('chat-frame-wrap');
+const settingsBtn = document.getElementById('btn-settings');
+const settingsPanel = document.getElementById('settings-panel');
+const settingsUrlInput = document.getElementById('settings-url');
+const settingsCurrent = document.getElementById('settings-current');
+const settingsMsg = document.getElementById('settings-msg');
+const saveUrlBtn = document.getElementById('btn-save-url');
+const changeUrlBtn = document.getElementById('btn-change-url');
 
 // Status line (built with DOM APIs, never innerHTML). Hoisted as a
 // function declaration so the bridge guard below can report through it.
@@ -96,6 +105,175 @@ transparentBtn.addEventListener('click', async () => {
 });
 
 document.getElementById('btn-close').addEventListener('click', () => api.close());
+
+// ---- settings panel (gear icon) ------------------------------------------
+// First-launch flow: no saved URL → the boot setup card points here; the
+// user clicks the gear, pastes the widget URL, presses Enter. The URL is
+// validated + canonicalized by the main process (chat:save-url) and
+// stored in its local settings db; the NEXT startup reads the db and
+// loads the widget. Real-life scenarios handled: empty input, invalid
+// URL (per-code message), unchanged re-save, Change with nothing saved,
+// IPC failure, corrupt db (falls back to "no URL saved", never crashes).
+
+let settingsOpen = false;
+
+function showSettingsMsg(text, ok) {
+  settingsMsg.textContent = text;
+  settingsMsg.classList.toggle('ok', Boolean(ok));
+}
+
+function renderSavedStatus(st) {
+  if (st && st.url) {
+    settingsCurrent.textContent = `Saved: ${st.url}`;
+  } else {
+    settingsCurrent.textContent = 'No widget URL saved yet.';
+  }
+}
+
+async function openSettings() {
+  settingsOpen = true;
+  settingsBtn.classList.add('active');
+  // The settings card replaces the widget/setup card while open; closing
+  // restores whatever was there (the iframe keeps its state while hidden).
+  frameWrap.style.display = 'none';
+  setupCard.style.display = 'none';
+  settingsPanel.classList.add('show');
+  settingsUrlInput.value = '';
+  showSettingsMsg('', false);
+  const st = await safeInvoke(() => api.getConfigStatus(), 'config status');
+  if (settingsOpen) renderSavedStatus(st);
+  settingsUrlInput.focus();
+}
+
+function closeSettings() {
+  settingsOpen = false;
+  settingsBtn.classList.remove('active');
+  settingsPanel.classList.remove('show');
+  // Reset inline overrides — CSS defaults bring back the widget iframe
+  // (or the boot setup card, which keeps its own .show class).
+  frameWrap.style.display = '';
+  setupCard.style.display = '';
+}
+
+settingsBtn.addEventListener('click', () => {
+  if (settingsOpen) closeSettings();
+  else openSettings().catch(() => {});
+});
+
+// After a successful save, the boot setup card (if it was showing) must
+// not keep claiming "no URL saved" — replace it with the restart note.
+function showSavedRestartCard() {
+  if (!setupCard.classList.contains('show')) return;
+  setupCard.replaceChildren();
+  const t = document.createElement('div');
+  t.className = 't';
+  t.textContent = 'Widget URL saved ✓';
+  setupCard.appendChild(t);
+  const h = document.createElement('div');
+  h.className = 'hint';
+  h.textContent =
+    'Restart the app (tray → Quit, or the X button) — the widget loads on the next startup.';
+  setupCard.appendChild(h);
+}
+
+async function saveUrlFromPanel() {
+  const raw = settingsUrlInput.value.trim();
+  if (!raw) {
+    showSettingsMsg('Enter a BotRix widget URL first — paste the full link from BotRix.', false);
+    settingsUrlInput.focus();
+    return;
+  }
+  const res = await safeInvoke(() => api.saveUrl(raw), 'save url');
+  if (res === null) return; // safeInvoke already surfaced the failure
+  if (res.ok) {
+    renderSavedStatus(res);
+    settingsUrlInput.value = '';
+    showSettingsMsg(
+      res.code === 'unchanged'
+        ? 'This URL is already saved ✓ — restart the app to load it.'
+        : 'Saved ✓ — restart the app and the widget loads on the next startup.',
+      true,
+    );
+    showSavedRestartCard();
+    setStatus('widget url saved — restart to load', false);
+  } else {
+    const copy = SETUP_COPY[res.code];
+    showSettingsMsg(
+      copy ? `Not saved — ${copy[0].toLowerCase()}` : `Not saved — invalid URL (${res.code}).`,
+      false,
+    );
+    settingsUrlInput.focus();
+    settingsUrlInput.select();
+  }
+}
+
+async function changeUrlFromPanel() {
+  const st = await safeInvoke(() => api.getConfigStatus(), 'config status');
+  if (st === null) return; // safeInvoke already surfaced the failure
+  if (st.url) {
+    settingsUrlInput.value = st.url;
+    showSettingsMsg('Edit the URL, then press Enter to save the change.', false);
+  } else {
+    showSettingsMsg('No URL saved yet — paste one above and press Enter.', false);
+  }
+  settingsUrlInput.focus();
+  settingsUrlInput.select();
+}
+
+saveUrlBtn.addEventListener('click', () => saveUrlFromPanel().catch(() => {}));
+changeUrlBtn.addEventListener('click', () => changeUrlFromPanel().catch(() => {}));
+// Enter in the field = save (same as the Enter button).
+settingsUrlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveUrlFromPanel().catch(() => {});
+  }
+});
+
+// Copy for every config diagnosis code — shown on the boot setup card
+// AND reused as the settings-panel error text (single source of truth).
+const SETUP_COPY = {
+  missing: [
+    'No widget URL saved',
+    [
+      ['Click the gear (settings) icon in the top bar, paste your BotRix multistream widget URL, and press Enter.', false],
+      ['Then restart the app — the widget loads on the next startup.', false],
+      ['https://botrix.live/widgets/chat/?bid=YOUR_BID', true],
+    ],
+  ],
+  empty: [
+    'Widget URL is empty',
+    [
+      ['The saved URL is blank. Click the gear icon, paste your BotRix multistream widget URL, and press Enter.', false],
+    ],
+  ],
+  'bad-protocol': [
+    'Widget URL must be https://',
+    [
+      ['The saved URL is not https — the panel refuses to embed it. Click the gear icon and re-enter it:', false],
+      ['https://botrix.live/widgets/chat/?bid=YOUR_BID', true],
+    ],
+  ],
+  'bad-host': [
+    'Widget URL host not allowed',
+    [
+      ['Only botrix.live widget URLs can be embedded. Click the gear icon and check for typos.', false],
+    ],
+  ],
+  'no-bid': [
+    'Widget URL is missing ?bid=',
+    [
+      ['Copy the FULL widget URL from BotRix — it carries the session id as ?bid=... Click the gear icon and re-enter it.', false],
+      ['https://botrix.live/widgets/chat/?bid=YOUR_BID', true],
+    ],
+  ],
+  'bad-bid': [
+    'Widget bid looks invalid',
+    [
+      ['The ?bid= value has illegal characters. Re-copy the URL from Botrix without editing it, then click the gear icon and re-enter it.', false],
+    ],
+  ],
+};
 
 // ---- viewer counts ------------------------------------------------------------
 // Pushed from the main process every ~30s (BotRix viewers REST polling).
@@ -179,8 +357,9 @@ const offError =
   transparentBtn.classList.toggle('active', !transparent);
 
   // Diagnose config FIRST so every failure mode gets an actionable card
-  // (no .env, empty key, http:, wrong host, missing/invalid bid) instead
-  // of a blank iframe. getWidgetUrl stays as the embed source of truth.
+  // (nothing saved, empty value, http:, wrong host, missing/invalid bid)
+  // instead of a blank iframe. getWidgetUrl stays as the embed source of
+  // truth.
   function showSetup(title, lines) {
     frame.remove();
     setupCard.replaceChildren();
@@ -196,55 +375,6 @@ const offError =
     }
     setupCard.classList.add('show');
   }
-
-  const SETUP_COPY = {
-    'no-env': [
-      'Setup needed — .env file not found',
-      [
-        ['Copy .env.example to .env next to the app, then paste your BotRix multistream widget URL in it.', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
-      ],
-    ],
-    missing: [
-      'Setup needed — BOTRIX_WIDGET_URL not found',
-      [
-        ['Your .env exists but has no BOTRIX_WIDGET_URL line. Add it:', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
-      ],
-    ],
-    empty: [
-      'Setup needed — widget URL is empty',
-      [
-        ['BOTRIX_WIDGET_URL is blank. Paste your BotRix multistream widget URL (the exact URL an OBS browser source loads).', false],
-      ],
-    ],
-    'bad-protocol': [
-      'Widget URL must be https://',
-      [
-        ['The configured URL is not https — the panel refuses to embed it. Fix BOTRIX_WIDGET_URL:', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
-      ],
-    ],
-    'bad-host': [
-      'Widget URL host not allowed',
-      [
-        ['Only botrix.live widget URLs can be embedded. Check BOTRIX_WIDGET_URL for typos.', false],
-      ],
-    ],
-    'no-bid': [
-      'Widget URL is missing ?bid=',
-      [
-        ['Copy the FULL widget URL from BotRix — it carries the session id as ?bid=...', false],
-        ['BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"', true],
-      ],
-    ],
-    'bad-bid': [
-      'Widget bid looks invalid',
-      [
-        ['The ?bid= value has illegal characters. Re-copy the URL from BotRix without editing it.', false],
-      ],
-    ],
-  };
 
   let status = { code: 'missing', url: null, bid: null };
   try {
@@ -298,7 +428,7 @@ const offError =
         if (settled) return;
         settled = true;
         clearTimeout(loadWatch);
-        setStatus(`widget failed to load (${why}) — check BOTRIX_WIDGET_URL`, false);
+        setStatus(`widget failed to load (${why}) — check the saved URL via the gear icon`, false);
       };
       const loadWatch = setTimeout(() => fail('timeout'), 15000);
       frame.addEventListener('load', () => {
@@ -336,7 +466,7 @@ const offError =
       setupCard.appendChild(t);
       const h = document.createElement('div');
       h.className = 'hint';
-      h.textContent = 'Only botrix.live widget URLs can be embedded. Check BOTRIX_WIDGET_URL for typos.';
+      h.textContent = 'Only botrix.live widget URLs can be embedded. Click the gear icon and check for typos.';
       setupCard.appendChild(h);
       setupCard.classList.add('show');
       setStatus('widget url not allowed — see panel', false);
@@ -351,7 +481,7 @@ const offError =
     setupCard.appendChild(t);
     const h = document.createElement('div');
     h.className = 'hint';
-    h.textContent = 'The app could not read BOTRIX_WIDGET_URL. Restart the app; if it persists, re-copy .env.example to .env.';
+    h.textContent = 'The app could not read the saved widget URL. Restart the app; if it persists, re-enter it via the gear icon.';
     setupCard.appendChild(h);
     setupCard.classList.add('show');
     setStatus('no widget url configured — see panel', false);

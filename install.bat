@@ -84,22 +84,7 @@ if not exist "node_modules\vite\package.json" (
 )
 echo [install] dependencies OK.
 
-:: --- 6. Config: .env from .env.example ------------------------------------
-if not exist ".env" (
-  if exist ".env.example" (
-    copy /y ".env.example" ".env" >nul
-    echo [install] created .env from .env.example.
-    echo [install] NEXT STEP: open .env and paste your BotRix widget URL:
-    echo [install]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
-    echo.
-  ) else (
-    echo [install] WARNING: no .env.example found - skipping config step.
-  )
-) else (
-  echo [install] .env already exists - leaving it untouched.
-)
-
-:: --- 7. Verify build + tests ----------------------------------------------
+:: --- 6. Verify build + tests ----------------------------------------------
 echo [install] verifying with npm test ^(syntax + unit + build^)...
 call npm test
 if errorlevel 1 (
@@ -111,8 +96,9 @@ if errorlevel 1 (
 echo.
 echo ============================================
 echo  Install complete.
-echo  1. Edit .env with your BotRix widget URL.
-echo  2. Run start.bat to launch the overlay.
+echo  1. Run start.bat to launch the overlay.
+echo  2. Click the gear icon in the panel and enter
+echo     your BotRix widget URL, then restart the app.
 echo ============================================
 pause
 endlocal

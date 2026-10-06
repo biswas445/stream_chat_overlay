@@ -28,7 +28,7 @@ if not exist "package.json" (
   pause
   exit /b 1
 )
-goto :envcheck
+goto :build
 
 :install
 echo [start] dependencies missing - running npm install (first run)...
@@ -39,24 +39,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-:: --- 3. Fresh-clone config: .env.example -> .env -------------------------
-:envcheck
-if not exist ".env" (
-  if exist ".env.example" (
-    echo [start] no .env found - creating one from .env.example...
-    copy /y ".env.example" ".env" >nul
-    echo [start] Created .env. Open it and paste your BotRix widget URL:
-    echo [start]   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID"
-    echo.
-    echo [start] The panel will open with a setup card until this is set.
-    pause
-  ) else (
-    echo [start] WARNING: neither .env nor .env.example found. The panel will show setup help.
-    pause
-  )
-)
-
 :: --- 4. Build + launch ----------------------------------------------------
+:build
 echo [start] building renderer...
 call npm start
 set CODE=!errorlevel!
@@ -66,4 +50,6 @@ if not "!CODE!"=="0" (
   pause
   exit /b !CODE!
 )
+echo [start] If the panel shows a setup card, click the gear icon,
+echo [start] paste your BotRix widget URL, press Enter, and restart.
 endlocal

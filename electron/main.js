@@ -28,7 +28,7 @@ const fs = require('node:fs');
 
 // Resource resolution: repo layout (electron/ at root), legacy parent
 // layout, and packaged install (resources/app) — plus the portable
-// exe directory so an installed user can keep .env next to the binary.
+// exe directory for asset lookup (tray icon).
 function resourceRoots() {
   const roots = [path.join(__dirname, '..'), path.join(__dirname, '..', '..')];
   try {
@@ -72,7 +72,7 @@ function stateFile() {
 
 const {
   sanitizeChatState,
-  parseBotrixWidgetUrl,
+  sanitizeConfig,
   parseViewerCount,
   extractBotrixBid,
   diagnoseWidgetUrl,
@@ -107,6 +107,33 @@ function saveState() {
     saveTimer = null;
     writeState();
   }, 250);
+}
+
+/* -------------------------------------------------- widget config db --- */
+
+// The BotRix widget URL lives in a JSON settings db in userData —
+// botrix-config.json (same proven pattern as overlay-state.json; a real
+// DB engine for one key would be unjustified complexity). It is written
+// ONLY through the settings UI (chat:save-url, validated + canonicalized
+// BEFORE it is stored) and read on every boot; a corrupt file falls back
+// to "no URL saved" instead of crashing boot.
+function configFile() {
+  return path.join(app.getPath('userData'), 'botrix-config.json');
+}
+
+function loadBotrixConfig() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(configFile(), 'utf8'));
+    return sanitizeConfig(saved);
+  } catch {
+    /* no config db yet / unreadable — first run */
+    return { widgetUrl: null };
+  }
+}
+
+function writeBotrixConfig(cfg) {
+  fs.mkdirSync(path.dirname(configFile()), { recursive: true });
+  fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2));
 }
 
 /* ------------------------------------------------------------------ tray */
@@ -463,30 +490,15 @@ function setChatOpen(open) {
 }
 
 /**
- * Full config diagnosis (not just the URL): distinguishes every way a
- * fresh install can be broken — no .env file, no key, empty value,
- * wrong protocol/host, missing/invalid bid. The renderer renders an
- * actionable setup card per code; the viewer poller stays silent.
+ * Full config diagnosis from the persisted settings db (not just the
+ * URL): distinguishes every way a configuration can be broken — nothing
+ * saved yet, empty value, wrong protocol/host, missing/invalid bid.
+ * The renderer renders an actionable setup card per code (pointing at
+ * the gear icon); the viewer poller stays silent.
  */
 function diagnoseBotrixConfig() {
-  let envFound = false;
-  let raw = null;
-  for (const root of resourceRoots()) {
-    try {
-      const envText = fs.readFileSync(path.join(root, '.env'), 'utf8');
-      envFound = true;
-      const parsed = parseBotrixWidgetUrl(envText);
-      if (parsed) {
-        raw = parsed;
-        break;
-      }
-    } catch {
-      /* no .env at this root — try the next */
-    }
-  }
-  if (!envFound) return { code: 'no-env', url: null, bid: null };
-  const d = diagnoseWidgetUrl(raw);
-  return { code: raw ? d.code : 'missing', url: d.url, bid: d.bid || null };
+  const d = diagnoseWidgetUrl(loadBotrixConfig().widgetUrl);
+  return { code: d.code, url: d.url, bid: d.bid || null };
 }
 
 function getBotrixWidgetUrl() {
@@ -511,7 +523,7 @@ let viewerTimer = null;
 const VIEWER_PLATFORMS = ['twitch', 'youtube', 'kick'];
 
 async function fetchPlatformViewers(widgetUrl, platform) {
-  // One request per platform, derived from the USER's .env widget URL:
+  // One request per platform, derived from the USER's saved widget URL:
   //   <base>/api/widgets/viewers?platform=twitch&bid=<bid-from-env>
   //   <base>/api/widgets/viewers?platform=kick&bid=<bid-from-env>
   //   <base>/api/widgets/viewers?platform=youtube&bid=<bid-from-env>
@@ -595,8 +607,8 @@ async function pollViewerCounts() {
 }
 
 /** Extract the bid from the configured widget URL (single source of truth:
- * BOTRIX_WIDGET_URL carries the session id). Delegates to the tested
- * shared helper (state-utils.js). */
+ * the saved widget URL in the settings db carries the session id).
+ * Delegates to the tested shared helper (state-utils.js). */
 function getBotrixBid() {
   return extractBotrixBid(getBotrixWidgetUrl());
 }
@@ -936,13 +948,33 @@ function registerIpc() {
     // connection); those legacy fields would always read as dead values.
   }));
 
-  // The BotRix widget URL for the panel's iframe (from BOTRIX_WIDGET_URL).
+  // The BotRix widget URL for the panel's iframe (from the settings db).
   guarded('chat:get-widget-url', () => getBotrixWidgetUrl());
 
   // Machine-readable config diagnosis for the setup card:
-  // { code, url, bid } — code is one of ok|no-env|missing|empty|
+  // { code, url, bid } — code is one of ok|missing|empty|
   // bad-protocol|bad-host|no-bid|bad-bid.
   guarded('chat:get-config-status', () => diagnoseBotrixConfig());
+
+  // Settings UI: validate + persist the BotRix widget URL into the
+  // settings db. Returns { ok, code, url?, bid? } — ok:false carries the
+  // diagnosis code so the panel can say exactly what was wrong; ok:true
+  // code 'unchanged' means the exact same canonical URL was already
+  // stored. The URL is canonicalized (only ?bid= kept) BEFORE it is
+  // written, so the db only ever holds a clean embeddable https: BotRix
+  // URL. Saving does NOT hot-swap the running widget: the next startup
+  // reads the db and loads it (the poller picks the new bid up on its
+  // next tick either way).
+  guarded('chat:save-url', (rawUrl) => {
+    const d = diagnoseWidgetUrl(typeof rawUrl === 'string' ? rawUrl.trim() : null);
+    if (d.code !== 'ok') return { ok: false, code: d.code, url: d.url };
+    const current = loadBotrixConfig().widgetUrl;
+    if (current === d.url) {
+      return { ok: true, code: 'unchanged', url: d.url, bid: d.bid };
+    }
+    writeBotrixConfig({ widgetUrl: d.url });
+    return { ok: true, code: 'ok', url: d.url, bid: d.bid };
+  });
 
   // Panel X button — explicit user intent to exit the overlay ENTIRELY:
   // no window, no tray, no background process, ever. (Hide-to-tray on X

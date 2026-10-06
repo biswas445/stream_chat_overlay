@@ -6,8 +6,8 @@
 const assert = require('node:assert/strict');
 const {
   sanitizeChatState,
+  sanitizeConfig,
   isAllowedWidgetUrl,
-  parseBotrixWidgetUrl,
   extractBotrixBid,
   diagnoseWidgetUrl,
   parseViewerCount,
@@ -66,6 +66,19 @@ t('booleans strict, defaults true', () => {
   assert.equal(sanitizeChatState({ transparent: 'yes' }).transparent, true);
 });
 
+// --- sanitizeConfig (settings db payload validation) ---
+t('config db: corrupt payloads fall back to no URL', () => {
+  for (const raw of [null, undefined, 42, 'x', [], {}]) {
+    assert.deepEqual(sanitizeConfig(raw), { widgetUrl: null });
+  }
+  assert.equal(sanitizeConfig({ widgetUrl: '' }).widgetUrl, null);
+  assert.equal(sanitizeConfig({ widgetUrl: 42 }).widgetUrl, null);
+  assert.equal(
+    sanitizeConfig({ widgetUrl: 'https://botrix.live/?bid=abc' }).widgetUrl,
+    'https://botrix.live/?bid=abc',
+  );
+});
+
 // --- isAllowedWidgetUrl (M-01) ---
 t('allowlist exact/sub, block lookalikes', () => {
   assert.equal(isAllowedWidgetUrl('https://botrix.live/x/?bid=1'), true);
@@ -76,36 +89,6 @@ t('allowlist exact/sub, block lookalikes', () => {
   assert.equal(isAllowedWidgetUrl('http://botrix.live/x?bid=1'), false);
   assert.equal(isAllowedWidgetUrl('javascript:alert(1)'), false);
   assert.equal(isAllowedWidgetUrl(null), false);
-});
-
-// --- parseBotrixWidgetUrl (M-08) ---
-t('env parser variants', () => {
-  assert.equal(
-    parseBotrixWidgetUrl('BOTRIX_WIDGET_URL=https://botrix.live/a/?bid=1'),
-    'https://botrix.live/a/?bid=1',
-  );
-  assert.equal(
-    parseBotrixWidgetUrl('BOTRIX_WIDGET_URL="https://botrix.live/a/?bid=1"'),
-    'https://botrix.live/a/?bid=1',
-  );
-  assert.equal(
-    parseBotrixWidgetUrl('export BOTRIX_WIDGET_URL=https://botrix.live/a/?bid=1'),
-    'https://botrix.live/a/?bid=1',
-  );
-  assert.equal(
-    parseBotrixWidgetUrl('BOTRIX_WIDGET_URL=https://botrix.live/a/?bid=1 # hi'),
-    'https://botrix.live/a/?bid=1',
-  );
-  assert.equal(
-    parseBotrixWidgetUrl('BOTRIX_WIDGET_URL="https://botrix.live/a/?bid=1#frag"'),
-    'https://botrix.live/a/?bid=1#frag',
-  );
-  assert.equal(
-    parseBotrixWidgetUrl('BOTRIX_WIDGET_URL=https://a.com/?bid=1\nBOTRIX_WIDGET_URL=https://b.com/?bid=2'),
-    'https://b.com/?bid=2',
-  );
-  assert.equal(parseBotrixWidgetUrl('BOTRIX_WIDGET_URL='), null);
-  assert.equal(parseBotrixWidgetUrl('# only a comment'), null);
 });
 
 // --- extractBotrixBid (M-02) ---
@@ -153,7 +136,7 @@ t('viewer URL shape platform-first bid-last, JSON API', () => {
     'https://botrix.live/api/widgets/viewers?platform=youtube&bid=ABC123',
   );
 });
-t('viewer URL derived from user .env URL, one platform each', () => {
+t('viewer URL derived from user saved URL, one platform each', () => {
   const cfg = 'https://botrix.live/widgets/chat/?bid=ENVBID1';
   assert.equal(
     buildViewerUrlFromWidgetUrl(cfg, 'twitch'),
@@ -199,7 +182,9 @@ t('viewer count parse JSON + HTML variants', () => {
 // --- error-display contracts (what the UI must say per failure) ---
 t('every diagnosis code has a distinct user message', () => {
   // Mirrors SETUP_COPY keys in src/chat.js — a code without copy = blank UI.
-  const codes = ['no-env', 'missing', 'empty', 'bad-protocol', 'bad-host', 'no-bid', 'bad-bid'];
+  // 'no-env' is gone: the .env mechanism was removed in favor of the
+  // settings db (gear icon in the panel).
+  const codes = ['missing', 'empty', 'bad-protocol', 'bad-host', 'no-bid', 'bad-bid'];
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'src', 'chat.js'),
     'utf8',
@@ -278,6 +263,53 @@ t('chat:close wired to full termination in main.js', () => {
   ]) {
     if (!main.includes(needle)) {
       throw new Error(`close wiring missing: ${needle}`);
+    }
+  }
+});
+
+// --- settings db wiring (gear icon flow, .env mechanism removed) ---
+t('settings flow wired end-to-end (db, save IPC, panel UI)', () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const pre = fs.readFileSync(path.join(root, 'electron', 'chat-preload.js'), 'utf8');
+  const chat = fs.readFileSync(path.join(root, 'src', 'chat.js'), 'utf8');
+  for (const needle of [
+    'botrix-config.json', // the settings db file (main.js)
+    'loadBotrixConfig', // db read on every boot
+    'writeBotrixConfig', // db write through the validated save path
+    "guarded('chat:save-url'", // validated + canonicalized save handler
+    "saveUrl: (rawUrl) => ipcRenderer.invoke('chat:save-url', rawUrl)", // preload bridge
+    "getElementById('btn-settings')", // gear button
+    "getElementById('settings-url')", // the input field
+    "getElementById('btn-save-url')", // Enter button
+    "getElementById('btn-change-url')", // Change button
+    'showSavedRestartCard', // saved → restart guidance
+  ]) {
+    if (!main.includes(needle) && !pre.includes(needle) && !chat.includes(needle)) {
+      throw new Error(`settings wiring missing: ${needle}`);
+    }
+  }
+  // The .env mechanism is gone from all three layers (process.env for the
+  // vite dev-server flag is unrelated and stays).
+  for (const [name, src] of [['main.js', main], ['chat-preload.js', pre], ['chat.js', chat]]) {
+    if (/(?<!process)\.env\b|BOTRIX_WIDGET_URL|parseBotrixWidgetUrl/.test(src)) {
+      throw new Error(`.env mechanism still present in ${name}`);
+    }
+  }
+  // The gear button exists in the panel markup with the shared hbtn class.
+  const html = fs.readFileSync(path.join(root, 'chat.html'), 'utf8');
+  for (const needle of [
+    'id="btn-settings"',
+    'class="hbtn" id="btn-settings"',
+    'id="settings-panel"',
+    'id="settings-url"',
+    'id="btn-save-url"',
+    'id="btn-change-url"',
+  ]) {
+    if (!html.includes(needle)) {
+      throw new Error(`settings panel markup missing: ${needle}`);
     }
   }
 });

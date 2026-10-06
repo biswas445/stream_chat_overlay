@@ -26,8 +26,10 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 - **Guided setup** — a missing or invalid configuration shows an actionable
   setup card instead of a blank panel.
 - **Tray application** — no taskbar button; Show/Hide and Quit from the tray icon.
+- **In-app setup** — no config files to edit: enter your widget URL once via the
+  panel's gear icon; it is stored in a local settings file and loaded on every start.
 - **Private by design** — messages exist only in memory; the widget session id
-  stays in your local git-ignored `.env` file.
+  stays in a local config file on your machine, never synced or logged.
 
 ## Requirements
 
@@ -41,9 +43,11 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 **Option A — installer scripts (recommended):**
 
 1. Double-click `install.bat`. It verifies Node 18+, installs dependencies,
-   creates `.env` from the template, and runs the test suite.
-2. Paste your BotRix widget URL into `.env` (see Configuration).
-3. Double-click `start.bat` to launch.
+   and runs the test suite.
+2. Double-click `start.bat` to launch.
+3. Click the gear (settings) icon in the panel and enter your BotRix
+   widget URL (see Configuration).
+4. Restart the app — the widget loads on the next startup.
 
 **Option B — manual:**
 
@@ -65,19 +69,24 @@ npm start
    https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&messageSound=0&...
    ```
 
-3. Paste the **entire link as-is** into your local `.env` file:
+3. Launch the app and click the **gear icon** in the panel's top bar.
+   Paste the **entire link as-is** into the text field and press **Enter**.
+   The app extracts the `?bid=` session id, drops the display params
+   (theme/sound — the panel manages those itself), and stores the clean
+   URL in a local settings file (`botrix-config.json` in
+   `%AppData%/Hikasha Chat`).
+4. Restart the app — the widget loads on the next startup.
 
-   ```dotenv
-   BOTRIX_WIDGET_URL="https://botrix.live/widgets/chat/?bid=YOUR_BID&theme=default&..."
-   ```
-
-   Trimming is unnecessary — the application extracts and retains only
-   the `?bid=` value internally.
+The panel's **Change** button loads the saved URL back into the field for
+editing; **Enter** validates and saves whatever is in the field. Empty or
+invalid URLs are rejected with a specific message (missing `?bid=`,
+non-https, wrong host, invalid characters).
 
 > **Security note:** the `?bid=` value is a private session identifier.
-> Do not share the link. `.env` is git-ignored and never committed; only
-> `.env.example` (placeholder value) is tracked. If a bid is exposed,
-> regenerate the widget URL in BotRix and update `.env`.
+> Do not share the link. It is stored only in the local settings file on
+> your machine — never committed, never synced, never logged. If a bid is
+> exposed, regenerate the widget URL in BotRix and re-enter it via the
+> gear icon.
 
 ## Usage
 
@@ -85,6 +94,7 @@ npm start
 | --- | --- |
 | Pin button | Toggle always-on-top |
 | Transparency button | Switch between glass and solid themes |
+| Gear button | Widget URL settings: enter / change the BotRix widget URL |
 | Close button | Quit the application |
 | Tray icon | Show/Hide panel, Quit |
 
@@ -101,11 +111,11 @@ npm run dist:win  # Windows NSIS installer, output to release/
 
 | Path | Responsibility |
 | --- | --- |
-| `electron/main.js` | Window management, tray, viewer polling, error reporting, config diagnosis |
-| `electron/state-utils.js` | Tested helpers: state validation, `.env` parsing, URL/bid/viewer logic |
+| `electron/main.js` | Window management, tray, viewer polling, error reporting, config diagnosis, settings db |
+| `electron/state-utils.js` | Tested helpers: state/config validation, URL/bid/viewer logic |
 | `electron/chat-preload.js` | Minimal IPC bridge exposed to the renderer |
 | `electron/launch.js` | Process launcher (strips `ELECTRON_RUN_AS_NODE`) |
-| `src/chat.js`, `chat.html` | Panel UI, setup card, error display |
+| `src/chat.js`, `chat.html` | Panel UI, setup card, settings panel, error display |
 | `splash.html` | Startup splash screen |
 | `tests/state-utils.test.js` | Unit test suite (must remain green) |
 | `install.bat`, `start.bat` | First-run installer and launcher with preflight checks |
@@ -120,15 +130,16 @@ npm run dist:win  # Windows NSIS installer, output to release/
 - Embedded content cannot open popups and is granted no media,
   fullscreen, or device permissions.
 - The widget session uses an isolated `persist:botrix-chat` partition.
-- Chat content is never written to disk. Unexpected errors are logged
-  and surfaced in the panel rather than failing silently.
+- Chat content is never written to disk; the widget URL is stored only in
+  the local settings file (`botrix-config.json` in `%AppData%`). Unexpected
+  errors are logged and surfaced in the panel rather than failing silently.
 
 ## Troubleshooting
 
 | Symptom | Cause | Resolution |
 | --- | --- | --- |
-| Setup card: `.env` file not found | Fresh install | Copy `.env.example` to `.env` and add the widget URL |
-| Setup card: `missing ?bid=` | Truncated URL | Re-copy the complete link from BotRix |
+| Setup card: No widget URL saved | Fresh install | Click the gear icon, paste the widget URL, press Enter, restart |
+| Setup card: missing `?bid=` | Truncated URL | Re-copy the complete link from BotRix, re-enter via the gear icon |
 | `widget failed to load (timeout)` | Invalid bid or offline | Verify the URL and connection, then restart |
 | Viewer counts dimmed at 0 | BotRix unreachable | Automatic recovery with exponential backoff |
 | `panel bridge unavailable` | Preload failure | Restart; reinstall if the problem persists |

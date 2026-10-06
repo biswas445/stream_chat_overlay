@@ -166,7 +166,7 @@
         background: transparent;
         display: block;
       }
-      /* SETUP CARD: shown instead of the iframe when BOTRIX_WIDGET_URL is
+      /* SETUP CARD: shown instead of the iframe when the saved widget URL is
          missing/broken. Actionable per failure code, theme-aware. */
       #setup-card {
         flex: 1; min-height: 0;
@@ -194,6 +194,68 @@
         color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
       }
       body:not(.opaque) #setup-card code { background: rgba(255,255,255,0.16); }
+
+      /* SETTINGS PANEL: toggled by the gear button (btn-settings). Same
+         card language as the setup card: radius, surface, padding, and
+         the same theme-aware glass/solid overrides. */
+      #settings-panel {
+        flex: 1; min-height: 0;
+        display: none; flex-direction: column;
+        align-items: stretch; justify-content: center; gap: 8px;
+        padding: 18px; margin: 0 10px 10px;
+        border-radius: 12px;
+        font-size: 12.5px; line-height: 1.5;
+        background: rgba(61, 57, 41, 0.06);
+        color: var(--claude-ink);
+        -webkit-app-region: no-drag;
+        user-select: text;
+      }
+      #settings-panel.show { display: flex; }
+      #settings-panel .t { font-weight: 700; font-size: 13px; }
+      #settings-panel .hint { opacity: 0.75; font-size: 12px; word-break: break-all; }
+      #settings-url {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--claude-border);
+        background: rgba(61, 57, 41, 0.08);
+        color: var(--claude-ink);
+        font-family: Consolas, monospace; font-size: 11.5px;
+        outline: none;
+        transition: border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+      #settings-url:focus { border-color: var(--claude-accent); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.25); }
+      #settings-url::placeholder { color: var(--claude-ink-soft); }
+      .srow { display: flex; gap: 8px; }
+      /* .sbtn mirrors the .hbtn reactions: same spring transform, hover
+         lift, active press, accent focus ring — sized for text labels. */
+      .sbtn {
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 6px 16px;
+        border: none; border-radius: 9px;
+        background: rgba(61, 57, 41, 0.1); color: var(--claude-ink);
+        font-family: inherit; font-size: 12px; font-weight: 600;
+        cursor: pointer;
+        transition: background 0.18s ease, transform 0.22s var(--spring), box-shadow 0.22s ease;
+      }
+      .sbtn:hover { background: rgba(61, 57, 41, 0.16); transform: translateY(-1px) scale(1.04); }
+      .sbtn:active { transform: scale(0.94); }
+      .sbtn:focus-visible { outline: 2px solid var(--claude-accent); outline-offset: 2px; }
+      .sbtn.primary { background: var(--claude-accent); color: #fff7f2; box-shadow: 0 3px 10px rgba(217, 119, 87, 0.35); }
+      .sbtn.primary:hover { background: var(--claude-accent-deep); }
+      body:not(.opaque) #settings-panel {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+      }
+      body:not(.opaque) #settings-url {
+        background: rgba(255,255,255,0.14);
+        border-color: rgba(255, 255, 255, 0.25);
+        color: #fff;
+      }
+      body:not(.opaque) #settings-url:focus { box-shadow: 0 0 0 2px rgba(255,255,255,0.25); }
+      body:not(.opaque) #settings-url::placeholder { color: rgba(255,255,255,0.6); }
+      body:not(.opaque) .sbtn { background: rgba(255,255,255,0.16); color: #fff; }
+      body:not(.opaque) .sbtn:hover { background: rgba(255,255,255,0.24); }
     </style>
   </head>
   <body class="resizable">
@@ -216,6 +278,12 @@
             <path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/>
           </svg>
         </button>
+        <button class="hbtn" id="btn-settings" title="Widget URL settings" aria-label="Widget URL settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
         <button class="hbtn" id="btn-close" title="Close chat panel" aria-label="Close chat panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 6 6 18M6 6l12 12"/>
@@ -226,6 +294,24 @@
         <iframe id="chat-frame" title="Multistream chat" allowtransparency="true"></iframe>
       </div>
       <div id="setup-card" role="alert"></div>
+      <div id="settings-panel" role="dialog" aria-label="Widget URL settings">
+        <div class="t">Widget URL settings</div>
+        <div id="settings-current" class="hint">No widget URL saved yet.</div>
+        <input
+          id="settings-url"
+          type="text"
+          inputmode="url"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="https://botrix.live/widgets/chat/?bid=YOUR_BID"
+          aria-label="BotRix widget URL"
+        />
+        <div class="srow">
+          <button class="sbtn primary" id="btn-save-url" title="Validate and save this URL" aria-label="Save widget URL">Enter</button>
+          <button class="sbtn" id="btn-change-url" title="Load the saved URL into the field" aria-label="Change widget URL">Change</button>
+        </div>
+        <div id="settings-msg" class="hint" role="status" aria-live="polite"></div>
+      </div>
     </div>
     <script type="module" src="/src/chat.js"></script>
   </body>

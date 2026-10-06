@@ -35,8 +35,8 @@
   "scripts": {
     "build": "vite build",
     "start": "npm run build && node electron/launch.js",
-    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && npm run build",
-    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js",
+    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/main-process.test.js && npm run build",
+    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/main-process.test.js",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -51,7 +51,6 @@
       "electron",
       "public/tray-icon.png",
       "public/chat-logo.png",
-      ".env.example",
       "package.json"
     ],
     "win": {

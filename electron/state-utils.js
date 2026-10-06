@@ -52,30 +52,13 @@ function isAllowedWidgetUrl(u) {
   }
 }
 
-/** Robust single-key .env parser for BOTRIX_WIDGET_URL. */
-function parseBotrixWidgetUrl(envText) {
-  const text = String(envText || '').replace(/^﻿/, '');
-  let found = null;
-  for (const line of text.split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const m = t.match(/^(?:export\s+)?BOTRIX_WIDGET_URL\s*=\s*(.*)$/);
-    if (!m) continue;
-    let raw = m[1].trim();
-    if (raw.length >= 2) {
-      const q = raw[0];
-      if ((q === '"' || q === "'") && raw.endsWith(q)) {
-        found = raw.slice(1, -1);
-        continue;
-      }
-    }
-    raw = raw
-      .replace(/\s+#.*$/, '')
-      .replace(/;$/, '')
-      .trim();
-    found = raw || null;
-  }
-  return found;
+/** Validate a raw persisted-config payload (e.g. botrix-config.json).
+ * Never throws; corrupt values fall back to "no URL saved". */
+function sanitizeConfig(raw) {
+  const c = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    widgetUrl: typeof c.widgetUrl === 'string' && c.widgetUrl ? c.widgetUrl : null,
+  };
 }
 
 /** Extract + validate the bid session id from a widget URL. */
@@ -93,7 +76,7 @@ function extractBotrixBid(url) {
 }
 
 /**
- * Diagnose a raw BOTRIX_WIDGET_URL value into a machine-readable reason.
+ * Diagnose a raw widget URL value into a machine-readable reason.
  * Every failure mode gets its own code so the UI can tell the user
  * EXACTLY what to fix (no more guessing at a blank panel).
  * Codes: ok | missing | empty | bad-protocol | bad-host | no-bid | bad-bid
@@ -155,8 +138,8 @@ function buildViewerUrl(bid, platform) {
 }
 
 /**
- * Build the viewer URL FROM the user's configured BOTRIX_WIDGET_URL:
- * keeps the bid from .env, forces the /api/widgets/viewers JSON endpoint,
+ * Build the viewer URL FROM the user's saved widget URL (settings db):
+ * keeps the bid, forces the /api/widgets/viewers JSON endpoint,
  * appends one `?platform=<name>&bid=<bid>` per call — exactly:
  *   <widget-base>/api/widgets/viewers?platform=twitch&bid=<bid-from-env>
  *   <widget-base>/api/widgets/viewers?platform=kick&bid=<bid-from-env>
@@ -197,8 +180,8 @@ module.exports = {
   numOr,
   boolOr,
   sanitizeChatState,
+  sanitizeConfig,
   isAllowedWidgetUrl,
-  parseBotrixWidgetUrl,
   extractBotrixBid,
   diagnoseWidgetUrl,
   parseViewerCount,

@@ -8,11 +8,15 @@ contextBridge.exposeInMainWorld('chatPanel', {
   /** Close the chat panel window. */
   close: () => ipcRenderer.send('chat:close'),
 
-  /** The BotRix multistream widget URL to embed (from BOTRIX_WIDGET_URL). */
+  /** The BotRix multistream widget URL to embed (from the settings db). */
   getWidgetUrl: () => ipcRenderer.invoke('chat:get-widget-url'),
 
   /** Machine-readable config diagnosis: { code, url, bid }. */
   getConfigStatus: () => ipcRenderer.invoke('chat:get-config-status'),
+
+  /** Validate + persist a BotRix widget URL into the settings db.
+   * Returns { ok, code, url?, bid? }. */
+  saveUrl: (rawUrl) => ipcRenderer.invoke('chat:save-url', rawUrl),
 
   /** Viewer counts: { total, twitch, youtube, kick } pushed every ~30s. */
   onViewers: (cb) => {
