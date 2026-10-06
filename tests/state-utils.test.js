@@ -138,37 +138,39 @@ t('config diagnosis codes', () => {
   assert.equal(ok.bid, 'ABC123');
 });
 
-// --- parseViewerCount + buildViewerUrl (widget-page endpoint) ---
-t('viewer URL shape bid-first platform-last', () => {
+// --- parseViewerCount + buildViewerUrl (JSON API endpoint) ---
+t('viewer URL shape platform-first bid-last, JSON API', () => {
   assert.equal(
     buildViewerUrl('ABC123', 'twitch'),
-    'https://botrix.live/widgets/viewers/?bid=ABC123&platform=twitch',
+    'https://botrix.live/api/widgets/viewers?platform=twitch&bid=ABC123',
   );
   assert.equal(
     buildViewerUrl('ABC123', 'kick'),
-    'https://botrix.live/widgets/viewers/?bid=ABC123&platform=kick',
+    'https://botrix.live/api/widgets/viewers?platform=kick&bid=ABC123',
   );
   assert.equal(
     buildViewerUrl('ABC123', 'youtube'),
-    'https://botrix.live/widgets/viewers/?bid=ABC123&platform=youtube',
+    'https://botrix.live/api/widgets/viewers?platform=youtube&bid=ABC123',
   );
 });
 t('viewer URL derived from user .env URL, one platform each', () => {
-  const cfg = 'https://botrix.live/widgets/multistream?bid=ENVBID1';
+  const cfg = 'https://botrix.live/widgets/chat/?bid=ENVBID1';
   assert.equal(
     buildViewerUrlFromWidgetUrl(cfg, 'twitch'),
-    'https://botrix.live/widgets/viewers/?bid=ENVBID1&platform=twitch',
+    'https://botrix.live/api/widgets/viewers?platform=twitch&bid=ENVBID1',
   );
   assert.equal(
     buildViewerUrlFromWidgetUrl(cfg, 'kick'),
-    'https://botrix.live/widgets/viewers/?bid=ENVBID1&platform=kick',
+    'https://botrix.live/api/widgets/viewers?platform=kick&bid=ENVBID1',
   );
   assert.equal(
     buildViewerUrlFromWidgetUrl(cfg, 'youtube'),
-    'https://botrix.live/widgets/viewers/?bid=ENVBID1&platform=youtube',
+    'https://botrix.live/api/widgets/viewers?platform=youtube&bid=ENVBID1',
   );
-  // never comma-joined
+  // never comma-joined, never the client-rendered HTML page
   assert.ok(!buildViewerUrlFromWidgetUrl(cfg, 'twitch').includes(','));
+  assert.ok(buildViewerUrlFromWidgetUrl(cfg, 'twitch').includes('/api/widgets/viewers?platform='));
+  assert.ok(!buildViewerUrlFromWidgetUrl(cfg, 'twitch').includes('/widgets/viewers/?'));
   // unconfigured -> null (poller stays silent)
   assert.equal(buildViewerUrlFromWidgetUrl(null, 'twitch'), null);
   assert.equal(buildViewerUrlFromWidgetUrl('https://evil.com/?bid=X', 'twitch'), null);
@@ -179,6 +181,16 @@ t('viewer count parse JSON + HTML variants', () => {
   assert.equal(parseViewerCount('<div>viewerCount: 7</div>'), 7);
   assert.equal(parseViewerCount('<span data-viewer-count="4"></span>'), 4);
   assert.equal(parseViewerCount('{"viewerCount":-1}'), 0);
+  // live-verified API shapes (offline channels)
+  assert.equal(parseViewerCount('{"viewerCount":0,"ok":false}'), 0);
+  assert.equal(parseViewerCount('{"viewerCount":0}'), 0);
+  assert.equal(parseViewerCount('{"viewerCount":-1}'), 0);
+  // the /widgets/viewers HTML page never contains a count token —
+  // parsing it must yield null (the old broken endpoint), not 0
+  assert.equal(
+    parseViewerCount('<html><head><title>BotRix | Viewers Widget</title></head><body><div><h1 id="cantidad">0</h1></div></body></html>'),
+    null,
+  );
   assert.equal(parseViewerCount('<html>no count here</html>'), null);
   assert.equal(parseViewerCount(''), null);
   assert.equal(parseViewerCount(null), null);
@@ -246,6 +258,28 @@ t('viewer normalize', () => {
     kick: 0,
   });
   assert.deepEqual(normalizeViewerCounts(null), { twitch: 0, youtube: 0, kick: 0 });
+});
+
+// --- close path wiring (X button = complete termination, no survivors) ---
+t('chat:close wired to full termination in main.js', () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const main = fs.readFileSync(
+    path.join(__dirname, '..', 'electron', 'main.js'),
+    'utf8',
+  );
+  for (const needle of [
+    "ipcMain.on('chat:close'", // the X handler exists
+    'chatWin.destroy()', // panel destroyed up front (hung renderer safe)
+    'tray.destroy()', // no ghost tray icon / dangling menu
+    'app.quit()', // normal quit path
+    'app.exit(0)', // force-exit fallback if quit is ever blocked
+    'saveTimer !== null', // pending state save flushed before exit
+  ]) {
+    if (!main.includes(needle)) {
+      throw new Error(`close wiring missing: ${needle}`);
+    }
+  }
 });
 
 console.log(`\n# pass ${n}`);

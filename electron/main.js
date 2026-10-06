@@ -497,11 +497,15 @@ function getBotrixWidgetUrl() {
 
 /* -------------------------------------------------- viewer counts --- */
 
-// BotRix's viewers widget page: /widgets/viewers/?bid=BID&platform=X
-// (user-verified: the /api/widgets/viewers path decoded from their bundle
-// does not serve counts; only the widget page does). We poll the widget
-// page per platform from the main process and push the parsed counts to
-// the chat panel's header — same bid, same session.
+// BotRix's viewers JSON API: /api/widgets/viewers?platform=X&bid=BID
+// (verified live: returns {"viewerCount":N} directly — twitch
+// {"viewerCount":0,"ok":false}, youtube {"viewerCount":0}, kick
+// {"viewerCount":-1} while offline; garbage bid returns an empty body.
+// The /widgets/viewers page is client-rendered HTML whose body never
+// contains the count — polling it always parsed null, which is why the
+// header pills used to stay dimmed at 0). We poll the JSON API per
+// platform from the main process and push the parsed counts to the chat
+// panel's header — same bid, same session.
 const VIEWER_POLL_S = 30; // the widget's own cadence
 let viewerTimer = null;
 
@@ -509,9 +513,9 @@ const VIEWER_PLATFORMS = ['twitch', 'youtube', 'kick'];
 
 async function fetchPlatformViewers(widgetUrl, platform) {
   // One request per platform, derived from the USER's .env widget URL:
-  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=twitch
-  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=kick
-  //   <base>/widgets/viewers/?bid=<bid-from-env>&platform=youtube
+  //   <base>/api/widgets/viewers?platform=twitch&bid=<bid-from-env>
+  //   <base>/api/widgets/viewers?platform=kick&bid=<bid-from-env>
+  //   <base>/api/widgets/viewers?platform=youtube&bid=<bid-from-env>
   // Platforms are never comma-joined into one URL. Null when unconfigured.
   const url = buildViewerUrlFromWidgetUrl(widgetUrl, platform);
   if (!url) return null;
@@ -523,10 +527,10 @@ async function fetchPlatformViewers(widgetUrl, platform) {
     try {
       // NOTE: no Referer header. A custom Referer is a fetch-spec forbidden
       // header that Electron's network service rejects outright in some
-      // contexts (ERR_BLOCKED_BY_CLIENT — the whole poll fails with it), and
-      // the live endpoint returns the identical body without it (verified:
-      // {"viewerCount":N,"ok":...} both ways), so it was never needed. The
-      // browser UA stays — plain net.fetch sends the Electron UA otherwise.
+      // contexts (ERR_BLOCKED_BY_CLIENT — the whole poll fails with it).
+      // The browser UA stays — plain net.fetch sends the Electron UA
+      // otherwise (the API serves identical JSON to the browser UA,
+      // verified live with the same "Mozilla/5.0" header).
       res = await net.fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         signal: ctrl.signal,
@@ -927,15 +931,54 @@ function registerIpc() {
   // bad-protocol|bad-host|no-bid|bad-bid.
   guarded('chat:get-config-status', () => diagnoseBotrixConfig());
 
-  // Panel X button — explicit user intent to exit the overlay entirely.
-  // (Hide-to-tray on X confused users: "X doesn't close the program".)
-  // So X quits the app; hiding stays available via the tray menu or
-  // OS window controls (Alt+F4), which keep the tray alive for reopen.
+  // Panel X button — explicit user intent to exit the overlay ENTIRELY:
+  // no window, no tray, no background process, ever. (Hide-to-tray on X
+  // confused users: "X doesn't close the program"; hiding stays available
+  // via the tray menu or OS window controls like Alt+F4, which keep the
+  // tray alive for reopen.) The close path is hardened so termination is
+  // guaranteed even if quit is ever blocked: flush the pending state
+  // save, destroy the panel + tray up front, then quit — with a
+  // force-exit fallback in case a hung window or future handler ever
+  // stops app.quit() from completing.
   ipcMain.on('chat:close', () => {
     try {
+      // Flush the debounced save FIRST so the last position/size is never
+      // lost — app.exit() below skips before-quit.
+      if (saveTimer !== null) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        writeState();
+      }
+      // destroy(), not close(): forceful, synchronous, no close-event
+      // dance — works even when the renderer is hung or crashed.
+      if (chatWin && !chatWin.isDestroyed()) chatWin.destroy();
+      if (tray) {
+        try {
+          tray.destroy();
+        } catch {
+          /* already gone */
+        }
+        tray = null;
+      }
       app.quit();
+      // Belt-and-braces: if quit is ever blocked (hung window, a future
+      // before-quit/will-quit preventDefault), force-exit so NO process
+      // ever survives the X button. When quit completes, this timer dies
+      // with the process and never runs.
+      setTimeout(() => {
+        try {
+          app.exit(0);
+        } catch {
+          /* process already exiting */
+        }
+      }, 1500);
     } catch (err) {
       reportUnexpected('ipc:chat:close', err);
+      try {
+        app.exit(0);
+      } catch {
+        /* process already exiting */
+      }
     }
   });
 }

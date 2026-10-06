@@ -146,18 +146,21 @@ function parseViewerCount(body) {
   return n > 0 ? n : 0; // -1 (offline) and 0 read as 0
 }
 
-/** Build the per-platform widget-page viewer URL the poller fetches. */
+/** Build the per-platform BotRix viewers JSON API URL the poller fetches.
+ * Verified live (and matching the widget's own bundle): the endpoint at
+ * /api/widgets/viewers returns {"viewerCount":N} directly; the /widgets/
+ * pages are client-rendered HTML whose bodies never contain the count. */
 function buildViewerUrl(bid, platform) {
-  return `https://botrix.live/widgets/viewers/?bid=${encodeURIComponent(bid)}&platform=${encodeURIComponent(platform)}`;
+  return `https://botrix.live/api/widgets/viewers?platform=${encodeURIComponent(platform)}&bid=${encodeURIComponent(bid)}`;
 }
 
 /**
  * Build the viewer URL FROM the user's configured BOTRIX_WIDGET_URL:
- * keeps the bid from .env, forces the /widgets/viewers/ page, appends
- * one `&platform=<name>` per call — exactly:
- *   <widget-base>/widgets/viewers/?bid=<bid-from-env>&platform=twitch
- *   <widget-base>/widgets/viewers/?bid=<bid-from-env>&platform=kick
- *   <widget-base>/widgets/viewers/?bid=<bid-from-env>&platform=youtube
+ * keeps the bid from .env, forces the /api/widgets/viewers JSON endpoint,
+ * appends one `?platform=<name>&bid=<bid>` per call — exactly:
+ *   <widget-base>/api/widgets/viewers?platform=twitch&bid=<bid-from-env>
+ *   <widget-base>/api/widgets/viewers?platform=kick&bid=<bid-from-env>
+ *   <widget-base>/api/widgets/viewers?platform=youtube&bid=<bid-from-env>
  * Never comma-joins platforms; one request per platform. Returns null
  * when the configured URL has no usable bid.
  */
@@ -173,7 +176,7 @@ function buildViewerUrlFromWidgetUrl(widgetUrl, platform) {
   } catch {
     /* fall back to canonical origin */
   }
-  return `${origin}/widgets/viewers/?bid=${encodeURIComponent(bid)}&platform=${encodeURIComponent(platform)}`;
+  return `${origin}/api/widgets/viewers?platform=${encodeURIComponent(platform)}&bid=${encodeURIComponent(bid)}`;
 }
 
 /** Normalize a viewer payload for the header pills. */
