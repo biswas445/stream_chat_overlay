@@ -1233,6 +1233,16 @@ process.on('unhandledRejection', (reason) =>
 
 /* ------------------------------------------------------------------ boot */
 
+// Portable mode: a portable.flag next to the exe redirects ALL app data
+// (settings db, logs, widget session cache, window state) into
+// <exe dir>/app-data instead of %AppData% — copy the folder, run the exe,
+// take it with you. Nothing is written to the machine outside the folder.
+const exeDir = path.dirname(app.getPath('exe'));
+const isPortable = fs.existsSync(path.join(exeDir, 'portable.flag'));
+if (isPortable) {
+  app.setPath('userData', path.join(exeDir, 'app-data'));
+}
+
 // Test hook: E2E runs the app against an isolated userData dir (never the
 // user's real settings db). Must be set before any getPath('userData') use
 // and before the single-instance lock, which is keyed on the userData dir.
@@ -1270,12 +1280,15 @@ if (!gotLock) {
     // the ready panel — the panel never paints while the logo is up.
     createSplashWindow();
     createTray();
-    // Auto-update (packaged builds only): the tag-gated release workflow
+    // Auto-update (installed builds only): the tag-gated release workflow
     // publishes installers + latest.yml to GitHub Releases; the app checks
     // on boot, downloads in the background, and applies on the next start.
-    // Failures are silent-by-design (offline is a normal state, not an
-    // error to surface over the stream).
-    if (app.isPackaged) {
+    // Portable copies skip the check entirely — electron-updater's cache
+    // lives in %LocalAppData% regardless of the userData redirect, so an
+    // update check would write outside the portable folder. A portable
+    // install updates by re-downloading. Failures are silent-by-design
+    // (offline is a normal state, not an error to surface over the stream).
+    if (app.isPackaged && !isPortable) {
       try {
         autoUpdater.autoDownload = true;
         autoUpdater.on('update-downloaded', () => {

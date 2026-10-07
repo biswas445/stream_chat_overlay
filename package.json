@@ -2,7 +2,7 @@
   "name": "chat-overlay-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "Transparent always-on-top multistream chat overlay for streamers â€” Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
+  "description": "Transparent always-on-top multistream chat overlay for streamers - Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
   "keywords": [
     "twitch-chat",
     "twitch-overlay",
@@ -67,7 +67,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Hikasha Chat"
+      "shortcutName": "Hikasha Chat",
+      "uninstallDisplayName": "Hikasha Chat",
+      "deleteAppDataOnUninstall": true
     }
   },
   "devDependencies": {

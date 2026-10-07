@@ -30,6 +30,10 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
   panel's gear icon; it is stored in a local settings file and loaded on every start.
 - **Auto-update** — packaged builds check GitHub Releases on boot and apply on
   the next start (dev builds skip the check).
+- **Portable mode** — copy the app folder anywhere and drop an empty
+  `portable.flag` file next to the exe: all app data (settings db, logs,
+  widget session) is stored inside the folder instead of `%AppData%`, so
+  nothing is written to the machine outside it.
 - **Private by design** — messages exist only in memory; the widget session id
   stays in a local config file on your machine, never synced or logged.
 
@@ -100,8 +104,24 @@ non-https, wrong host, invalid characters).
 | Close button | Quit the application |
 | Tray icon | Show/Hide panel, Quit |
 
-Window position, size, pin state, and theme persist between sessions
-in `%AppData%/overlay-state.json`.
+Window position, size, pin state, and theme persist between sessions in
+`%AppData%/Hikasha Chat/overlay-state.json`.
+
+## Uninstall & Portability
+
+**Installed via the Setup exe:** uninstall from Windows Settings → Apps
+("Hikasha Chat"). The uninstaller removes the install folder, shortcuts,
+and the registry entry, and also deletes the app's data folder
+(`%AppData%/Hikasha Chat` — window state, settings db with the widget
+URL, logs, and the widget session cache). Electron's own updater cache
+(`%LocalAppData%/chat-overlay-frontend-updater`, a few KB) is the only
+trace that remains.
+
+**Portable:** copy `win-unpacked/` (or any install folder) anywhere, drop
+an empty `portable.flag` file next to `Hikasha Chat.exe`, and run it —
+every file the app writes (settings db, logs, widget session, window
+state) stays inside that folder's `app-data/`. Delete the folder and the
+app is gone completely; nothing is written to the machine outside it.
 
 ## Development
 
